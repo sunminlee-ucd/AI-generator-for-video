@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Video Editor</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">Conversational editing</p>
+        <h1>AI Video Editor</h1>
+      </div>
+      <span id="status" class="status">Ready</span>
+    </header>
+
+    <section id="upload-panel" class="upload-panel">
+      <input id="video-file" type="file" accept="video/*">
+      <button id="upload-button">Upload video</button>
+      <p>Upload a video, then describe the edit you want.</p>
+    </section>
+
+    <section id="workspace" class="workspace hidden">
+      <div class="preview-card">
+        <video id="preview" controls playsinline></video>
+        <div class="toolbar">
+          <button id="undo-button" class="secondary">Undo last edit</button>
+          <span id="metadata"></span>
+        </div>
+      </div>
+
+      <aside class="chat-card">
+        <div id="messages" class="messages"></div>
+        <form id="chat-form">
+          <textarea id="prompt" rows="3" placeholder="e.g. Cut the first 4 seconds and make it 1.2x faster"></textarea>
+          <button type="submit">Apply edit</button>
+        </form>
+      </aside>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
