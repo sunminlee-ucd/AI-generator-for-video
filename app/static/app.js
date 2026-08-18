@@ -42,21 +42,37 @@ function assetOptions(kind) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 }
-function renderAssets() {
-  assetsNode.innerHTML = '';
-  for (const asset of project?.assets || []) {
-    const item = document.createElement('div');
-    item.className = 'asset-chip';
-    item.innerHTML = `<strong>${escapeHtml(asset.filename)}</strong><span>${asset.kind}</span>`;
-    assetsNode.appendChild(item);
-  }
-  if (!(project?.assets || []).length) assetsNode.innerHTML = '<p class="empty">No extra media yet.</p>';
-}
 function field(label, key, value, type='text', extra='') {
   return `<label>${label}<input data-key="${key}" type="${type}" value="${escapeHtml(value ?? '')}" ${extra}></label>`;
 }
 function selectField(label, key, value, options) {
   return `<label>${label}<select data-key="${key}">${options.map(([v,t]) => `<option value="${v}" ${v===value?'selected':''}>${t}</option>`).join('')}</select></label>`;
+}
+function easingOptions(value) {
+  const options = [['linear','Linear'],['ease_in','Ease in'],['ease_out','Ease out'],['ease_in_out','Ease in-out']];
+  return options.map(([v,t]) => `<option value="${v}" ${v===value?'selected':''}>${t}</option>`).join('');
+}
+function motionEditor(op) {
+  if (!['masked_video', 'picture_in_picture'].includes(op.type)) return '';
+  const frames = op.motion_keyframes || [];
+  const rows = frames.map((frame, motionIndex) => `
+    <div class="keyframe-row" data-motion-index="${motionIndex}">
+      <label>Time (s)<input data-motion-key="time_seconds" type="number" step="0.1" min="0" value="${escapeHtml(frame.time_seconds ?? 0)}"></label>
+      <label>X<input data-motion-key="x" type="number" step="1" value="${escapeHtml(frame.x ?? 0)}"></label>
+      <label>Y<input data-motion-key="y" type="number" step="1" value="${escapeHtml(frame.y ?? 0)}"></label>
+      <label>Easing<select data-motion-key="easing">${easingOptions(frame.easing || 'linear')}</select></label>
+      <button type="button" class="danger remove-keyframe">Remove keyframe</button>
+    </div>
+  `).join('');
+  return `
+    <div class="motion-editor">
+      <div class="motion-heading">
+        <div><strong>Motion path</strong><small>Keyframes move this layer over time. Negative X/Y values can move it off-screen.</small></div>
+        <button type="button" class="secondary add-keyframe">Add keyframe at playhead</button>
+      </div>
+      <div class="keyframe-list">${rows || '<p class="empty">No motion yet. Add at least two keyframes to animate the position.</p>'}</div>
+    </div>
+  `;
 }
 function operationEditor(op, index) {
   let controls = '';
@@ -72,16 +88,27 @@ function operationEditor(op, index) {
     field('Background', 'text_background_color', op.text_background_color || 'black@0.45'),
   ].join('');
   if (op.type === 'split_screen') controls = `<label>Second video<select data-key="secondary_asset_id">${assetOptions('video')}</select></label>` + selectField('Layout', 'layout', op.layout || 'side_by_side', [['side_by_side','Side by side'],['stacked','Stacked']]) + field('Ratio', 'ratio', op.ratio || 0.5, 'number', 'step="0.05" min="0.15" max="0.85"');
-  if (op.type === 'picture_in_picture') controls = `<label>Overlay video<select data-key="secondary_asset_id">${assetOptions('video')}</select></label>` + field('X', 'x', op.x || 20, 'number') + field('Y', 'y', op.y || 20, 'number') + field('Width', 'width', op.width || 360, 'number') + field('Height', 'height', op.height || 202, 'number');
-  if (op.type === 'masked_video') controls = `<label>Background video<select data-key="secondary_asset_id">${assetOptions('video')}</select></label>` + selectField('Mask', 'shape', op.shape || 'star', [['star','Star'],['circle','Circle'],['heart','Heart'],['triangle','Triangle']]) + field('X', 'x', op.x || 40, 'number') + field('Y', 'y', op.y || 40, 'number') + field('Width', 'width', op.width || 360, 'number') + field('Height', 'height', op.height || 360, 'number') + field('Rotation', 'rotation', op.rotation || 0, 'number') + field('Feather', 'feather', op.feather || 0, 'number', 'min="0" max="100"') + field('Opacity', 'opacity', op.opacity ?? 1, 'number', 'step="0.05" min="0" max="1"');
+  if (op.type === 'picture_in_picture') controls = `<label>Overlay video<select data-key="secondary_asset_id">${assetOptions('video')}</select></label>` + field('X', 'x', op.x ?? 20, 'number') + field('Y', 'y', op.y ?? 20, 'number') + field('Width', 'width', op.width || 360, 'number') + field('Height', 'height', op.height || 202, 'number') + field('Start (s)', 'start_seconds', op.start_seconds, 'number', 'step="0.1" min="0"') + field('End (s)', 'end_seconds', op.end_seconds, 'number', 'step="0.1" min="0"');
+  if (op.type === 'masked_video') controls = `<label>Background video<select data-key="secondary_asset_id">${assetOptions('video')}</select></label>` + selectField('Mask', 'shape', op.shape || 'star', [['star','Star'],['circle','Circle'],['heart','Heart'],['triangle','Triangle']]) + field('X', 'x', op.x ?? 40, 'number') + field('Y', 'y', op.y ?? 40, 'number') + field('Width', 'width', op.width || 360, 'number') + field('Height', 'height', op.height || 360, 'number') + field('Rotation', 'rotation', op.rotation || 0, 'number') + field('Feather', 'feather', op.feather || 0, 'number', 'min="0" max="100"') + field('Opacity', 'opacity', op.opacity ?? 1, 'number', 'step="0.05" min="0" max="1"') + field('Start (s)', 'start_seconds', op.start_seconds, 'number', 'step="0.1" min="0"') + field('End (s)', 'end_seconds', op.end_seconds, 'number', 'step="0.1" min="0"');
   if (op.type === 'music') controls = `<label>Music<select data-key="source_asset_id">${assetOptions('audio')}</select></label>` + field('Volume', 'volume', op.volume ?? 0.35, 'number', 'step="0.05" min="0" max="4"') + field('Start (s)', 'start_seconds', op.start_seconds || 0, 'number', 'step="0.1"') + field('End (s)', 'end_seconds', op.end_seconds, 'number', 'step="0.1"') + field('Fade in', 'fade_in_seconds', op.fade_in_seconds || 0, 'number', 'step="0.1"') + field('Fade out', 'fade_out_seconds', op.fade_out_seconds || 0, 'number', 'step="0.1"') + `<label class="check"><input data-key="ducking" type="checkbox" ${op.ducking?'checked':''}> Duck music under speech</label>`;
   if (op.type === 'style_transfer') controls = `<label>Style prompt<textarea data-key="style_prompt" rows="3">${escapeHtml(op.style_prompt || '')}</textarea></label>`;
 
   return `<article class="operation" data-index="${index}">
     <div class="operation-head"><div><span class="op-type">${op.type.replaceAll('_',' ')}</span><small>${op.id?.slice(0,8) || ''}</small></div><label class="check"><input data-key="enabled" type="checkbox" ${op.enabled !== false ? 'checked':''}> Enabled</label></div>
     <div class="control-grid">${controls || '<p class="hint">No additional parameters.</p>'}</div>
+    ${motionEditor(op)}
     <button class="danger remove-op" type="button">Remove</button>
   </article>`;
+}
+function renderAssets() {
+  assetsNode.innerHTML = '';
+  for (const asset of project?.assets || []) {
+    const item = document.createElement('div');
+    item.className = 'asset-chip';
+    item.innerHTML = `<strong>${escapeHtml(asset.filename)}</strong><span>${asset.kind}</span>`;
+    assetsNode.appendChild(item);
+  }
+  if (!(project?.assets || []).length) assetsNode.innerHTML = '<p class="empty">No extra media yet.</p>';
 }
 function renderOperations() {
   operationsNode.innerHTML = operations.map(operationEditor).join('') || '<p class="empty">No edits yet. Ask AI for a proposal.</p>';
@@ -93,15 +120,62 @@ function renderOperations() {
       input.addEventListener('change', () => updateOperation(index, input));
       input.addEventListener('input', () => updateOperation(index, input));
     });
-    card.querySelector('.remove-op')?.addEventListener('click', () => { operations.splice(index, 1); renderOperations(); });
+    card.querySelectorAll('[data-motion-key]').forEach((input) => {
+      const row = input.closest('[data-motion-index]');
+      const motionIndex = Number(row.dataset.motionIndex);
+      input.addEventListener('input', () => updateMotionKeyframe(index, motionIndex, input, false));
+      input.addEventListener('change', () => updateMotionKeyframe(index, motionIndex, input, input.dataset.motionKey === 'time_seconds'));
+    });
+    card.querySelector('.add-keyframe')?.addEventListener('click', () => addKeyframe(index));
+    card.querySelectorAll('.remove-keyframe').forEach((button) => {
+      button.addEventListener('click', () => {
+        const motionIndex = Number(button.closest('[data-motion-index]').dataset.motionIndex);
+        operations[index].motion_keyframes.splice(motionIndex, 1);
+        syncProposal();
+        renderOperations();
+      });
+    });
+    card.querySelector('.remove-op')?.addEventListener('click', () => { operations.splice(index, 1); syncProposal(); renderOperations(); });
   });
+}
+function syncProposal() {
+  if (pendingProposal) pendingProposal.operations = operations;
 }
 function updateOperation(index, input) {
   const key = input.dataset.key;
   let value = input.type === 'checkbox' ? input.checked : input.value;
   if (input.type === 'number') value = value === '' ? null : Number(value);
   operations[index][key] = value;
-  if (pendingProposal) pendingProposal.operations = operations;
+  syncProposal();
+}
+function updateMotionKeyframe(operationIndex, motionIndex, input, rerender) {
+  const key = input.dataset.motionKey;
+  let value = input.value;
+  if (input.type === 'number') value = value === '' ? 0 : Number(value);
+  operations[operationIndex].motion_keyframes ||= [];
+  operations[operationIndex].motion_keyframes[motionIndex][key] = value;
+  if (rerender) {
+    operations[operationIndex].motion_keyframes.sort((a, b) => Number(a.time_seconds) - Number(b.time_seconds));
+    renderOperations();
+  }
+  syncProposal();
+}
+function addKeyframe(index) {
+  operations[index].motion_keyframes ||= [];
+  const playhead = Number.isFinite(preview.currentTime) ? Number(preview.currentTime.toFixed(2)) : 0;
+  const existing = operations[index].motion_keyframes;
+  let time = playhead;
+  while (existing.some((frame) => Math.abs(Number(frame.time_seconds) - time) < 0.001)) time = Number((time + 0.1).toFixed(2));
+  const previous = [...existing].sort((a,b) => Number(a.time_seconds)-Number(b.time_seconds)).filter((frame) => Number(frame.time_seconds) <= time).at(-1);
+  existing.push({
+    time_seconds: time,
+    x: previous?.x ?? operations[index].x ?? 40,
+    y: previous?.y ?? operations[index].y ?? 40,
+    easing: previous?.easing || 'linear',
+  });
+  existing.sort((a,b) => Number(a.time_seconds)-Number(b.time_seconds));
+  syncProposal();
+  renderOperations();
 }
 
 uploadButton.addEventListener('click', async () => {
@@ -142,7 +216,7 @@ form.addEventListener('submit', async (event) => {
     pendingPrompt = prompt; pendingProposal = result.plan;
     operations = [...(project.operations || []), ...(result.plan.operations || [])];
     addMessage('assistant', `${result.assistant_message}\nReview the proposed controls before applying.`);
-    proposalNote.textContent = 'AI proposal is not rendered yet. Adjust any values, disable/remove changes, then apply.';
+    proposalNote.textContent = 'AI proposal is not rendered yet. Adjust any values, add motion keyframes, disable/remove changes, then apply.';
     proposalNote.classList.remove('hidden'); applyProposalButton.classList.remove('hidden');
     renderOperations(); setStatus('Review proposal');
   } catch (error) { addMessage('assistant', error.message); setStatus('Failed'); }
