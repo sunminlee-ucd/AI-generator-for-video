@@ -37,8 +37,15 @@ Rules:
 4. Use seconds for time values.
 5. If the user asks for a generative visual style, use style_transfer; do not use it for normal compositing.
 6. Keep assistant_message concise and state what is being proposed, not that it already happened.
-7. If required media is missing, return no operations and explain what needs to be uploaded.
+7. Return no operations only when required media is missing or the request truly cannot be represented by the supported operations. In that case, clearly explain what the user needs to provide or change.
 8. Prefer media_overlay or masked_media for extra uploaded visual layers. Use masked_video only when the project source itself must be masked over another background.
+9. If the user's request is achievable with the supported operations, return at least one operation. Do not return an empty operation list just because the request is phrased casually or in a language other than English.
+"""
+
+EMPTY_PLAN_RETRY = """
+The previous draft contained zero operations. Re-evaluate the user's request carefully.
+If any supported operation can satisfy the request, return one or more concrete operations now.
+Only return zero operations when an additional media asset is required but missing, or when the request genuinely cannot be represented by the supported operations. If you still return zero operations, make assistant_message explicitly tell the user what is missing or unsupported.
 """
 
 
@@ -65,6 +72,15 @@ class GeminiPlanner:
             f"Uploaded assets:\n{asset_context}\n\n"
             f"User request: {user_prompt}"
         )
+
+        plan = self._generate(context)
+        if plan.operations:
+            return plan
+
+        retry_context = f"{context}\n\n{EMPTY_PLAN_RETRY}\nPrevious assistant message: {plan.assistant_message}"
+        return self._generate(retry_context)
+
+    def _generate(self, context: str) -> EditPlan:
         config = self._types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
