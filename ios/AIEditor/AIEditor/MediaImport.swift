@@ -3,6 +3,7 @@ import Foundation
 import PhotosUI
 import UniformTypeIdentifiers
 import UIKit
+import SwiftUI
 
 struct PickedMovie: Transferable {
     let url: URL
