@@ -2,39 +2,51 @@
 
 A conversational web video editor built around three layers:
 
-1. **Gemini 3.6 Flash** converts natural-language requests into a validated edit plan.
-2. **FFmpeg** performs deterministic edits such as trim, speed, audio changes, and text overlays.
+1. **Gemini 3.6 Flash** converts natural-language requests into validated edit proposals.
+2. **FFmpeg** performs deterministic video/audio editing and compositing.
 3. **Wan 2.2 TI2V-5B** produces short generative visual-style previews when a request needs generation rather than ordinary editing.
 
-## Why this architecture
+## Editing model
 
-The language model does not generate arbitrary shell commands. It can only return a small typed set of edit operations. This keeps edits predictable and makes validation possible before rendering.
+AI edits are no longer applied immediately. Gemini first returns a typed proposal. The user can fine-tune every proposed operation, disable it, remove it, or change its parameters before rendering.
 
-Ordinary edits are always re-rendered from the original source in one FFmpeg pass. This avoids cumulative quality loss and keeps preview latency low. Long Wan jobs run separately so the web request does not remain blocked.
+The same operation model is used for AI edits and manual edits, so later commands can target the same project state instead of creating a separate AI-only workflow.
 
 ## Current MVP capabilities
 
-- Upload a video from the browser.
-- Chat with Gemini 3.6 Flash.
-- Trim video.
-- Change playback speed from 0.5x to 2.0x.
-- Mute or change volume.
-- Add text overlays.
-- Undo the latest command.
+- Upload a source video from the browser.
+- Upload additional video and audio assets.
+- Ask Gemini 3.6 Flash for an edit proposal.
+- Review and fine-tune AI changes before applying them.
+- Re-edit already applied operations and render again.
+- Enable/disable/remove individual operations.
+- Trim, speed, mute, and volume edits.
+- Text overlays with position, font family, font size, colour, and background colour.
+- Side-by-side and stacked split screen.
+- Picture-in-picture positioning and sizing.
+- Shape masks: star, circle, heart, and triangle.
+- Play the main video inside a shape while a separate background video continues behind it.
+- Background music with volume, start/end time, fade in/out, looping, and speech ducking.
+- Undo the latest AI edit batch.
 - Route generative style requests to Wan 2.2.
-- Poll render jobs from the browser and replace the preview when complete.
+- Poll render jobs and refresh the browser preview when complete.
+
+## Free/licensed music workflow
+
+The app deliberately does not scrape or redistribute third-party stock-music catalogues. Verified CC0/CC-BY music can be added as project audio assets and then selected by Gemini or the user. This keeps the rendering path licence-aware while allowing a curated music library to be added later.
 
 ## Important Wan 2.2 limitation
 
-The first MVP uses Wan 2.2 TI2V-5B in image-to-video mode. It extracts a reference frame from the currently edited video and generates a short restyled preview from that frame and the style prompt.
+The current Wan 2.2 adapter uses TI2V-5B in image-to-video mode. It extracts a reference frame from the currently edited video and generates a short restyled preview from that frame and the style prompt.
 
-This is **not frame-perfect video-to-video style transfer** and does not preserve every motion in the source clip. The adapter is intentionally isolated so a stronger video-to-video provider can be added later without changing the chat, planner, timeline, or FFmpeg layers.
+This is **not frame-perfect video-to-video style transfer** and does not preserve every motion in the source clip. The adapter is isolated so a stronger video-to-video provider can replace it later without changing the planner, operation editor, or FFmpeg composition layer.
 
 ## Requirements
 
 - Python 3.10+
 - FFmpeg and FFprobe
 - Gemini API key
+- Pillow
 - Optional: CUDA-capable machine for Wan 2.2
 
 ## Local setup
@@ -46,7 +58,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `GEMINI_API_KEY` in your environment, then run:
+Set `GEMINI_API_KEY`, then run:
 
 ```bash
 uvicorn app.main:app --reload
@@ -54,32 +66,45 @@ uvicorn app.main:app --reload
 
 Open `http://localhost:8000`.
 
-## Wan 2.2 setup
+## Workflow
 
-Clone the official Wan 2.2 repository and install its dependencies in a GPU environment. For the consumer-GPU path, download the `Wan2.2-TI2V-5B` checkpoint and configure:
-
-```bash
-export WAN_REPO_PATH=/absolute/path/to/Wan2.2
-export WAN_CKPT_DIR=/absolute/path/to/Wan2.2-TI2V-5B
-```
-
-The app invokes the official `generate.py` script using `ti2v-5B`, image-to-video input, CPU offloading, and a short default preview of 49 frames. Change `WAN_FRAME_NUM` to trade speed for preview length.
+1. Upload the source video.
+2. Upload any extra video/audio assets needed for background video, split-screen, PiP, or music.
+3. Ask AI for an edit.
+4. Review the proposal in **AI changes**.
+5. Change timing, font, shape, position, size, opacity, music volume, fades, ducking, etc.
+6. Apply the proposal.
+7. Fine-tune applied operations and render again as needed.
 
 ## API
 
-### Upload
+### Upload source video
 
-`POST /api/projects` with multipart field `file`.
+`POST /api/projects`
 
-### Apply a conversational edit
+### Upload another video or audio asset
+
+`POST /api/projects/{project_id}/assets`
+
+### Ask Gemini for an edit proposal
 
 `POST /api/projects/{project_id}/commands`
 
 ```json
 {
-  "prompt": "Cut the first four seconds and make the result 1.2x faster"
+  "prompt": "Put the main video inside a star, use my beach clip as the background, and add quiet music"
 }
 ```
+
+This endpoint returns a proposal and does **not** render it yet.
+
+### Apply a reviewed proposal
+
+`POST /api/projects/{project_id}/apply-plan`
+
+### Replace/fine-tune all applied operations
+
+`PUT /api/projects/{project_id}/operations`
 
 ### Check a render
 
@@ -95,13 +120,14 @@ The app invokes the official `generate.py` script using `ti2v-5B`, image-to-vide
 pytest -q
 ```
 
-The FFmpeg test generates a synthetic four-second clip, applies trim + speed, and verifies the resulting duration.
+The test suite covers schema validation, trim/speed rendering, and a real FFmpeg integration path that combines a star-shaped foreground video, a separately playing background video, text, background music, fade-out, and speech ducking.
 
 ## Next engineering priorities
 
-1. Send sampled frames/transcript context to Gemini for semantic commands such as "keep only the parts where the cat appears".
-2. Replace the in-process thread pool with Redis + a worker queue for production.
-3. Store media in object storage instead of the local filesystem.
-4. Add authentication and per-user project isolation.
-5. Add proxy generation for large source videos.
-6. Add a true video-to-video generative provider while keeping the Wan adapter as an optional backend.
+1. Add a visual drag/resize/rotate canvas so mask/PiP controls do not require numeric fields.
+2. Add a real multi-track timeline with clip handles and per-layer timing.
+3. Add a curated CC0/CC-BY music catalogue with licence metadata.
+4. Send sampled frames/transcript context to Gemini for semantic commands such as "keep only the parts where the cat appears".
+5. Store media in Cloud Storage and move render state to a persistent database/queue for Cloud Run.
+6. Add proxy generation for large source videos.
+7. Add a true video-to-video generative provider while keeping Wan as an optional backend.
