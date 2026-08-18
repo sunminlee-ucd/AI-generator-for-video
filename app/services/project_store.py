@@ -13,7 +13,7 @@ class ProjectStore:
     def __init__(self):
         self._lock = Lock()
 
-    def create(self, filename: str, source_path: Path, metadata: dict) -> dict:
+    def create(self, filename: str, source_path: Path, metadata: dict, source_kind: str = "video") -> dict:
         project_id = uuid4().hex
         project_dir = PROJECTS_DIR / project_id
         project_dir.mkdir(parents=True, exist_ok=True)
@@ -22,6 +22,7 @@ class ProjectStore:
         data = {
             "id": project_id,
             "filename": filename,
+            "source_kind": source_kind,
             "source_path": str(target),
             "metadata": metadata,
             "operations": [],
@@ -46,13 +47,7 @@ class ProjectStore:
             assets_dir.mkdir(parents=True, exist_ok=True)
             target = assets_dir / f"{asset_id}{source_path.suffix.lower()}"
             source_path.replace(target)
-            asset = {
-                "id": asset_id,
-                "filename": filename,
-                "kind": kind,
-                "path": str(target),
-                "metadata": metadata,
-            }
+            asset = {"id": asset_id, "filename": filename, "kind": kind, "path": str(target), "metadata": metadata}
             data.setdefault("assets", []).append(asset)
             self._write(project_id, data)
             return asset
@@ -62,11 +57,7 @@ class ProjectStore:
             data = self.get(project_id)
             batch = [op.model_dump(mode="json") for op in plan.operations]
             data["operations"].extend(batch)
-            data["history"].append({
-                "prompt": prompt,
-                "assistant_message": plan.assistant_message,
-                "operation_count": len(batch),
-            })
+            data["history"].append({"prompt": prompt, "assistant_message": plan.assistant_message, "operation_count": len(batch)})
             self._write(project_id, data)
             return data
 
@@ -74,11 +65,7 @@ class ProjectStore:
         with self._lock:
             data = self.get(project_id)
             data["operations"] = [op.model_dump(mode="json") for op in operations]
-            data["history"].append({
-                "prompt": "Manual fine-tuning",
-                "assistant_message": "Updated operation parameters.",
-                "operation_count": 0,
-            })
+            data["history"].append({"prompt": "Manual fine-tuning", "assistant_message": "Updated operation parameters.", "operation_count": 0})
             self._write(project_id, data)
             return data
 
