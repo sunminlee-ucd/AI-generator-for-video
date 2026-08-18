@@ -18,6 +18,15 @@ OperationType = Literal[
     "style_transfer",
 ]
 
+EasingType = Literal["linear", "ease_in", "ease_out", "ease_in_out"]
+
+
+class MotionKeyframe(BaseModel):
+    time_seconds: float = Field(ge=0)
+    x: int = Field(ge=-8192, le=8192)
+    y: int = Field(ge=-8192, le=8192)
+    easing: EasingType = "linear"
+
 
 class EditOperation(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
@@ -57,6 +66,7 @@ class EditOperation(BaseModel):
     border_width: int | None = Field(default=0, ge=0, le=50)
     border_color: str | None = Field(default="white", max_length=40)
     fit: Literal["cover", "contain"] | None = None
+    motion_keyframes: list[MotionKeyframe] = Field(default_factory=list)
 
     # Background music.
     fade_in_seconds: float | None = Field(default=0.0, ge=0, le=30)
@@ -88,6 +98,14 @@ class EditOperation(BaseModel):
             raise ValueError("music requires source_asset_id")
         if self.type == "style_transfer" and not self.style_prompt:
             raise ValueError("style_transfer requires style_prompt")
+        if self.motion_keyframes:
+            if self.type not in {"masked_video", "picture_in_picture"}:
+                raise ValueError("motion_keyframes are supported only for masked_video and picture_in_picture")
+            ordered = sorted(self.motion_keyframes, key=lambda frame: frame.time_seconds)
+            for previous, current in zip(ordered, ordered[1:]):
+                if abs(previous.time_seconds - current.time_seconds) < 1e-6:
+                    raise ValueError("motion keyframe times must be unique")
+            self.motion_keyframes = ordered
         return self
 
 
