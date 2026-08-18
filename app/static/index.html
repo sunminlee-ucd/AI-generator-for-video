@@ -10,7 +10,7 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">Conversational editing</p>
+        <p class="eyebrow">Conversational editing with manual control</p>
         <h1>AI Video Editor</h1>
       </div>
       <span id="status" class="status">Ready</span>
@@ -18,24 +18,56 @@
 
     <section id="upload-panel" class="upload-panel">
       <input id="video-file" type="file" accept="video/*">
-      <button id="upload-button">Upload video</button>
-      <p>Upload a video, then describe the edit you want.</p>
+      <button id="upload-button">Upload source video</button>
+      <p>Upload a source video, then add extra video/audio assets and ask AI for an edit proposal.</p>
     </section>
 
     <section id="workspace" class="workspace hidden">
-      <div class="preview-card">
-        <video id="preview" controls playsinline></video>
-        <div class="toolbar">
-          <button id="undo-button" class="secondary">Undo last edit</button>
-          <span id="metadata"></span>
+      <div class="left-column">
+        <div class="preview-card">
+          <video id="preview" controls playsinline></video>
+          <div class="toolbar">
+            <div class="toolbar-actions">
+              <button id="undo-button" class="secondary">Undo AI edit</button>
+              <button id="save-operations" class="secondary">Render fine-tuned settings</button>
+            </div>
+            <span id="metadata"></span>
+          </div>
         </div>
+
+        <section class="assets-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Media library</p>
+              <h2>Extra video & music</h2>
+            </div>
+            <label class="file-button">
+              Add media
+              <input id="asset-file" type="file" accept="video/*,audio/*">
+            </label>
+          </div>
+          <div id="assets" class="assets-list"></div>
+          <p class="hint">Use verified CC0/CC-BY music files here. The app stores licence-safe tracks as project audio assets instead of scraping third-party catalogues.</p>
+        </section>
+
+        <section class="changes-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Manual control</p>
+              <h2>AI changes</h2>
+            </div>
+            <button id="apply-proposal" class="hidden">Apply proposed changes</button>
+          </div>
+          <div id="proposal-note" class="proposal-note hidden"></div>
+          <div id="operations" class="operations"></div>
+        </section>
       </div>
 
       <aside class="chat-card">
         <div id="messages" class="messages"></div>
         <form id="chat-form">
-          <textarea id="prompt" rows="3" placeholder="e.g. Cut the first 4 seconds and make it 1.2x faster"></textarea>
-          <button type="submit">Apply edit</button>
+          <textarea id="prompt" rows="4" placeholder="e.g. Put the main video inside a star and use my beach video as the background. Add quiet music with ducking."></textarea>
+          <button type="submit">Ask AI for proposal</button>
         </form>
       </aside>
     </section>
