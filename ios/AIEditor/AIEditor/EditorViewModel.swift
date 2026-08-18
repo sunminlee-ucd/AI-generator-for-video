@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import SwiftUI
 
 struct ChatMessage: Identifiable { let id = UUID(); let role: String; let text: String }
 
