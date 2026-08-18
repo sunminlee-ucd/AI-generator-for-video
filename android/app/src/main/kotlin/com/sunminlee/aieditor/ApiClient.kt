@@ -19,7 +19,20 @@ class ApiClient(private val context: Context) {
     fun createProject(file: File, mime: String): JSONObject = multipart("/api/projects", file, mime, mapOf("still_duration_seconds" to "5"))
     fun addAsset(projectId: String, file: File, mime: String, kind: String): JSONObject = multipart("/api/projects/$projectId/assets", file, mime, mapOf("kind" to kind, "still_duration_seconds" to "5"))
     fun project(id: String): JSONObject = request("GET", "/api/projects/$id")
-    fun propose(id: String, prompt: String): JSONObject = request("POST", "/api/projects/$id/commands", JSONObject().put("prompt", prompt).toString())
+
+    fun propose(id: String, prompt: String): JSONObject {
+        val result = request("POST", "/api/projects/$id/commands", JSONObject().put("prompt", prompt).toString())
+        val plan = result.optJSONObject("plan")
+        val operationCount = plan?.optJSONArray("operations")?.length() ?: 0
+        if (operationCount == 0) {
+            val guidance = result.optString("assistant_message")
+                .ifBlank { plan?.optString("assistant_message").orEmpty() }
+                .ifBlank { "AI needs a little more information before it can create this edit." }
+            throw IllegalStateException(guidance)
+        }
+        return result
+    }
+
     fun apply(id: String, prompt: String, message: String, operations: JSONArray): JSONObject = request("POST", "/api/projects/$id/apply-plan", JSONObject().put("prompt", prompt).put("assistant_message", message).put("operations", operations).toString())
     fun replace(id: String, operations: JSONArray): JSONObject = request("PUT", "/api/projects/$id/operations", JSONObject().put("operations", operations).toString())
     fun job(id: String): JSONObject = request("GET", "/api/jobs/$id")
