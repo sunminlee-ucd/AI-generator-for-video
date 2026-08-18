@@ -26,6 +26,10 @@ The same operation model is used for AI edits and manual edits, so later command
 - Picture-in-picture positioning and sizing.
 - Shape masks: star, circle, heart, and triangle.
 - Play the main video inside a shape while a separate background video continues behind it.
+- Animate masked-video and PiP position with editable keyframes.
+- Use linear, ease-in, ease-out, or ease-in-out motion between keyframes.
+- Allow negative keyframe positions so a layer can enter from or leave the screen.
+- Add a keyframe at the current preview playhead and fine-tune its time/X/Y values.
 - Background music with volume, start/end time, fade in/out, looping, and speech ducking.
 - Undo the latest AI edit batch.
 - Route generative style requests to Wan 2.2.
@@ -73,8 +77,24 @@ Open `http://localhost:8000`.
 3. Ask AI for an edit.
 4. Review the proposal in **AI changes**.
 5. Change timing, font, shape, position, size, opacity, music volume, fades, ducking, etc.
-6. Apply the proposal.
-7. Fine-tune applied operations and render again as needed.
+6. For a masked/PiP layer, move the preview playhead and add motion keyframes with time/X/Y/easing values.
+7. Apply the proposal.
+8. Fine-tune applied operations and render again as needed.
+
+## Motion model
+
+`masked_video` and `picture_in_picture` operations can contain `motion_keyframes`. Each keyframe stores:
+
+```json
+{
+  "time_seconds": 1.5,
+  "x": 420,
+  "y": 180,
+  "easing": "ease_in_out"
+}
+```
+
+FFmpeg evaluates the layer position on every frame and interpolates between keyframes. Negative X/Y positions are valid for entrance and exit animations.
 
 ## API
 
@@ -92,7 +112,7 @@ Open `http://localhost:8000`.
 
 ```json
 {
-  "prompt": "Put the main video inside a star, use my beach clip as the background, and add quiet music"
+  "prompt": "Put the main video inside a star, use my beach clip as the background, and move the star from left to right"
 }
 ```
 
@@ -120,14 +140,15 @@ This endpoint returns a proposal and does **not** render it yet.
 pytest -q
 ```
 
-The test suite covers schema validation, trim/speed rendering, and a real FFmpeg integration path that combines a star-shaped foreground video, a separately playing background video, text, background music, fade-out, and speech ducking.
+The test suite covers schema validation, trim/speed rendering, motion-keyframe validation, and a real FFmpeg integration path that combines a moving star-shaped foreground video, a separately playing background video, text, background music, fade-out, and speech ducking.
 
 ## Next engineering priorities
 
-1. Add a visual drag/resize/rotate canvas so mask/PiP controls do not require numeric fields.
-2. Add a real multi-track timeline with clip handles and per-layer timing.
-3. Add a curated CC0/CC-BY music catalogue with licence metadata.
-4. Send sampled frames/transcript context to Gemini for semantic commands such as "keep only the parts where the cat appears".
-5. Store media in Cloud Storage and move render state to a persistent database/queue for Cloud Run.
-6. Add proxy generation for large source videos.
-7. Add a true video-to-video generative provider while keeping Wan as an optional backend.
+1. Add a visual drag/resize/rotate canvas so mask/PiP controls and keyframe positions can be set directly on the preview.
+2. Add scale/rotation/opacity animation to motion keyframes in addition to X/Y movement.
+3. Add a real multi-track timeline with clip handles and per-layer timing.
+4. Add a curated CC0/CC-BY music catalogue with licence metadata.
+5. Send sampled frames/transcript context to Gemini for semantic commands such as "keep only the parts where the cat appears".
+6. Store media in Cloud Storage and move render state to a persistent database/queue for Cloud Run.
+7. Add proxy generation for large source videos.
+8. Add a true video-to-video generative provider while keeping Wan as an optional backend.
