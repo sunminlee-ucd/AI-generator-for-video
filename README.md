@@ -52,7 +52,33 @@ export GEMINI_API_KEY=...
 uvicorn app.main:app --reload
 ```
 
-For physical phones, set the native app's Backend Server setting to the HTTPS URL of the deployed backend (for example a Cloud Run service). Localhost only refers to the phone itself when running on a real device.
+For physical phones, use the HTTPS URL of the deployed backend. Localhost on a real phone refers to the phone itself.
+
+## Cloud Run + Gemini
+
+The Gemini key belongs only on the backend. Do **not** put it in Swift, Kotlin, the APK, or GitHub source.
+
+A one-command Cloud Run deployment is included:
+
+```bash
+export GCP_PROJECT_ID="your-google-cloud-project-id"
+export GCP_REGION="europe-west1"
+bash deploy/cloud-run.sh
+```
+
+On the first deployment, the script prompts for the Gemini API key using hidden input, stores it in Google Secret Manager, grants the Cloud Run runtime service account access to that secret, deploys the backend from source, and verifies `/api/health`.
+
+Subsequent deploys reuse the existing secret automatically:
+
+```bash
+GCP_PROJECT_ID="your-google-cloud-project-id" bash deploy/cloud-run.sh
+```
+
+The backend uses `gemini-3.6-flash` by default and exposes only safe readiness metadata from `/api/health`; it never returns the API key.
+
+The current Cloud Run profile intentionally keeps **one warm instance** with CPU throttling disabled because project files and background render-job state are still local to a single process. This is an MVP/private-testing profile. Cloud Storage plus a durable render queue are the next step before multi-instance production scaling.
+
+See [`deploy/CLOUD_RUN.md`](deploy/CLOUD_RUN.md) for prerequisites, overrides, key rotation, verification, and native-app connection instructions.
 
 ## iPhone app
 
@@ -163,13 +189,21 @@ GET /api/projects/{project_id}/media/preview
 
 The previous `/video/{kind}` route remains as a compatibility alias.
 
+Health/readiness:
+
+```text
+GET /api/health
+```
+
+The health response reports whether Gemini is configured without exposing the secret.
+
 ## Tests
 
 ```bash
 pytest -q
 ```
 
-Coverage includes video editing, moving masked video, background video + music, schema validation, mobile-web regression checks, and photo/video interoperability. `tests/test_image_media.py` verifies a still-image project with a moving image overlay and a video project with a star-masked image layer.
+Coverage includes video editing, moving masked video, background video + music, schema validation, mobile-web regression checks, photo/video interoperability, and Cloud Run deployment safeguards. `tests/test_image_media.py` verifies a still-image project with a moving image overlay and a video project with a star-masked image layer.
 
 ## Current native UX
 
@@ -185,10 +219,11 @@ Both native clients follow a simple first-run flow:
 
 ## Next priorities
 
-1. iOS pinch-to-resize + two-finger rotation to match Android direct manipulation.
-2. Native motion-point/keyframe UI on both platforms.
-3. Visual trim handles and a true multi-track timeline.
-4. Curated CC0/CC-BY music library with licence metadata.
-5. Cloud Storage + persistent render queue for production deployment.
-6. Physical-device usability passes on current iOS and Android devices.
-7. Production signing/release pipelines for TestFlight/App Store and signed Android releases.
+1. Deploy the backend to Cloud Run and set the resulting HTTPS URL in both native apps.
+2. Move project files and rendered outputs to Cloud Storage and replace the in-memory render queue with a durable worker/queue architecture.
+3. iOS pinch-to-resize + two-finger rotation to match Android direct manipulation.
+4. Native motion-point/keyframe UI on both platforms.
+5. Visual trim handles and a true multi-track timeline.
+6. Curated CC0/CC-BY music library with licence metadata.
+7. Physical-device usability passes on current iOS and Android devices.
+8. Production signing/release pipelines for TestFlight/App Store and signed Android releases.
