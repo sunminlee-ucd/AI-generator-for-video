@@ -1,138 +1,167 @@
 # AI Video Editor
 
-A conversational web video editor built around three layers:
+A native-first conversational media editor with a shared FastAPI/FFmpeg backend.
 
-1. **Gemini 3.6 Flash** converts natural-language requests into validated edit proposals.
-2. **FFmpeg** performs deterministic video/audio editing and compositing.
-3. **Wan 2.2 TI2V-5B** produces short generative visual-style previews when a request needs generation rather than ordinary editing.
+- **iPhone:** native SwiftUI app in `ios/AIEditor`, built with Xcode command-line tooling (`xcrun xcodebuild`).
+- **Android:** native Kotlin app in `android`, built as an installable APK.
+- **Backend:** FastAPI + Gemini edit planning + FFmpeg rendering/compositing + optional Wan generative preview.
+- **Web UI:** retained as a development/fallback client, but it is no longer the primary product surface.
 
-## Editing model
+## Product model
 
-AI edits are no longer applied immediately. Gemini first returns a typed proposal. The user can fine-tune every proposed operation, disable it, remove it, or change its parameters before rendering.
+Photos and videos are first-class visual media. A project can start from either a **photo or video**, and extra visual assets can also be photos or videos. Audio remains a separate media kind.
 
-The same operation model is used for AI edits and manual edits, so later commands can target the same project state instead of creating a separate AI-only workflow.
+```text
+media
+├── video
+├── image
+└── audio
+```
 
-## Current MVP capabilities
+A still image is treated as a timed visual clip (5 seconds by default) so the same rendering pipeline can compose it with video, text, masks, motion, and music.
 
-- Upload a source video from the browser.
-- Upload additional video and audio assets.
-- Ask Gemini 3.6 Flash for an edit proposal.
-- Review and fine-tune AI changes before applying them.
-- Re-edit already applied operations and render again.
-- Enable/disable/remove individual operations.
-- Trim, speed, mute, and volume edits.
-- Text overlays with position, font family, font size, colour, and background colour.
-- Side-by-side and stacked split screen.
-- Picture-in-picture positioning and sizing.
-- Shape masks: star, circle, heart, and triangle.
-- Play the main video inside a shape while a separate background video continues behind it.
-- Animate masked-video and PiP position with editable keyframes.
-- Use linear, ease-in, ease-out, or ease-in-out motion between keyframes.
-- Allow negative keyframe positions so a layer can enter from or leave the screen.
-- Add a keyframe at the current preview playhead and fine-tune its time/X/Y values.
-- Background music with volume, start/end time, fade in/out, looping, and speech ducking.
-- Undo the latest AI edit batch.
-- Route generative style requests to Wan 2.2.
-- Poll render jobs and refresh the browser preview when complete.
+## Generic visual operations
 
-## Free/licensed music workflow
+- Photo or video project source.
+- Photo/video split screen.
+- Photo/video picture-in-picture.
+- `media_overlay`: place an uploaded photo or video over the current canvas.
+- `masked_media`: place an uploaded photo or video inside a star/circle/heart/triangle.
+- Legacy `masked_video`: mask the project source while a photo or video plays/sits behind it.
+- X/Y motion paths for visual layers.
+- Drag positioning on both native clients.
+- Android pinch-to-resize; iOS drag positioning plus simple size controls.
+- Text, trim, speed, mute/volume, and background music remain part of the same operation model.
 
-The app deliberately does not scrape or redistribute third-party stock-music catalogues. Verified CC0/CC-BY music can be added as project audio assets and then selected by Gemini or the user. This keeps the rendering path licence-aware while allowing a curated music library to be added later.
+AI edits are proposals first: **Ask AI -> Review -> Fine-tune -> Apply**. AI and manual controls edit the same structured operations.
 
-## Important Wan 2.2 limitation
+## Backend setup
 
-The current Wan 2.2 adapter uses TI2V-5B in image-to-video mode. It extracts a reference frame from the currently edited video and generates a short restyled preview from that frame and the style prompt.
-
-This is **not frame-perfect video-to-video style transfer** and does not preserve every motion in the source clip. The adapter is isolated so a stronger video-to-video provider can replace it later without changing the planner, operation editor, or FFmpeg composition layer.
-
-## Requirements
+Requirements:
 
 - Python 3.10+
-- FFmpeg and FFprobe
+- FFmpeg / FFprobe
 - Gemini API key
 - Pillow
-- Optional: CUDA-capable machine for Wan 2.2
-
-## Local setup
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-```
-
-Set `GEMINI_API_KEY`, then run:
-
-```bash
+export GEMINI_API_KEY=...
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:8000`.
+For physical phones, set the native app's Backend Server setting to the HTTPS URL of the deployed backend (for example a Cloud Run service). Localhost only refers to the phone itself when running on a real device.
 
-## Workflow
+## iPhone app
 
-1. Upload the source video.
-2. Upload any extra video/audio assets needed for background video, split-screen, PiP, or music.
-3. Ask AI for an edit.
-4. Review the proposal in **AI changes**.
-5. Change timing, font, shape, position, size, opacity, music volume, fades, ducking, etc.
-6. For a masked/PiP layer, move the preview playhead and add motion keyframes with time/X/Y/easing values.
-7. Apply the proposal.
-8. Fine-tune applied operations and render again as needed.
+Open:
 
-## Motion model
-
-`masked_video` and `picture_in_picture` operations can contain `motion_keyframes`. Each keyframe stores:
-
-```json
-{
-  "time_seconds": 1.5,
-  "x": 420,
-  "y": 180,
-  "easing": "ease_in_out"
-}
+```text
+ios/AIEditor/AIEditor.xcodeproj
 ```
 
-FFmpeg evaluates the layer position on every frame and interpolates between keyframes. Negative X/Y positions are valid for entrance and exit animations.
+Simulator command-line build:
 
-## API
-
-### Upload source video
-
-`POST /api/projects`
-
-### Upload another video or audio asset
-
-`POST /api/projects/{project_id}/assets`
-
-### Ask Gemini for an edit proposal
-
-`POST /api/projects/{project_id}/commands`
-
-```json
-{
-  "prompt": "Put the main video inside a star, use my beach clip as the background, and move the star from left to right"
-}
+```bash
+cd ios/AIEditor
+chmod +x build-ios.sh
+./build-ios.sh simulator
 ```
 
-This endpoint returns a proposal and does **not** render it yet.
+The script uses `xcrun xcodebuild`.
 
-### Apply a reviewed proposal
+For a physical iPhone, provide your Apple Developer Team ID and let Xcode manage provisioning:
 
-`POST /api/projects/{project_id}/apply-plan`
+```bash
+cd ios/AIEditor
+DEVELOPMENT_TEAM=YOUR_TEAM_ID ./build-ios.sh device
+```
 
-### Replace/fine-tune all applied operations
+The iOS app uses `PhotosPicker` to select photos/videos. Selected photos are normalized to JPEG before upload, which also makes common iPhone photo formats usable by the backend without special server-side HEIC handling.
 
-`PUT /api/projects/{project_id}/operations`
+## Android app / APK
 
-### Check a render
+The Android client is under `android/` and uses native Android framework UI with touch-first controls.
 
-`GET /api/jobs/{job_id}`
+Local debug APK build:
 
-### Undo
+```bash
+cd android
+chmod +x build-android.sh
+./build-android.sh
+```
 
-`POST /api/projects/{project_id}/undo`
+Output:
+
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+The debug APK is directly installable for testing. A production release APK should be signed with your own Android signing key.
+
+Android photos are downsampled when necessary and normalized to JPEG before upload. Video/audio files are copied from the Android document picker into app cache and uploaded as media assets.
+
+## CI mobile artifacts
+
+`.github/workflows/mobile-builds.yml` runs three jobs:
+
+1. backend FFmpeg/Python tests,
+2. Android debug APK build and artifact upload,
+3. iOS simulator build with `xcrun xcodebuild` on a macOS runner.
+
+The Android artifact is named `AIEditor-Android-debug-apk`. The iOS simulator artifact is named `AIEditor-iOS-simulator-app`.
+
+A signed iPhone device build is intentionally not produced in CI until Apple signing credentials are configured.
+
+## API highlights
+
+Create a project from a photo or video:
+
+```text
+POST /api/projects
+```
+
+Optional form field for still-image duration:
+
+```text
+still_duration_seconds=5
+```
+
+Add another photo/video/audio asset:
+
+```text
+POST /api/projects/{project_id}/assets
+kind=auto|image|video|audio
+```
+
+Ask AI for an edit proposal:
+
+```text
+POST /api/projects/{project_id}/commands
+```
+
+Apply reviewed changes:
+
+```text
+POST /api/projects/{project_id}/apply-plan
+```
+
+Fine-tune all applied operations and re-render:
+
+```text
+PUT /api/projects/{project_id}/operations
+```
+
+Preview/source media endpoints:
+
+```text
+GET /api/projects/{project_id}/media/source
+GET /api/projects/{project_id}/media/preview
+```
+
+The previous `/video/{kind}` route remains as a compatibility alias.
 
 ## Tests
 
@@ -140,15 +169,26 @@ This endpoint returns a proposal and does **not** render it yet.
 pytest -q
 ```
 
-The test suite covers schema validation, trim/speed rendering, motion-keyframe validation, and a real FFmpeg integration path that combines a moving star-shaped foreground video, a separately playing background video, text, background music, fade-out, and speech ducking.
+Coverage includes video editing, moving masked video, background video + music, schema validation, mobile-web regression checks, and photo/video interoperability. `tests/test_image_media.py` verifies a still-image project with a moving image overlay and a video project with a star-masked image layer.
 
-## Next engineering priorities
+## Current native UX
 
-1. Add a visual drag/resize/rotate canvas so mask/PiP controls and keyframe positions can be set directly on the preview.
-2. Add scale/rotation/opacity animation to motion keyframes in addition to X/Y movement.
-3. Add a real multi-track timeline with clip handles and per-layer timing.
-4. Add a curated CC0/CC-BY music catalogue with licence metadata.
-5. Send sampled frames/transcript context to Gemini for semantic commands such as "keep only the parts where the cat appears".
-6. Store media in Cloud Storage and move render state to a persistent database/queue for Cloud Run.
-7. Add proxy generation for large source videos.
-8. Add a true video-to-video generative provider while keeping Wan as an optional backend.
+Both native clients follow a simple first-run flow:
+
+1. Choose photo or video.
+2. Ask AI in plain language.
+3. Review proposed edits.
+4. Expand only the change you want to adjust.
+5. Drag visual layers directly rather than entering coordinates.
+6. Apply AI changes or render manual adjustments.
+7. Add more photos, videos, or music from the Media tab.
+
+## Next priorities
+
+1. iOS pinch-to-resize + two-finger rotation to match Android direct manipulation.
+2. Native motion-point/keyframe UI on both platforms.
+3. Visual trim handles and a true multi-track timeline.
+4. Curated CC0/CC-BY music library with licence metadata.
+5. Cloud Storage + persistent render queue for production deployment.
+6. Physical-device usability passes on current iOS and Android devices.
+7. Production signing/release pipelines for TestFlight/App Store and signed Android releases.
