@@ -14,9 +14,10 @@ Supported operations:
 - mute: remove source audio.
 - volume: source audio multiplier from 0.0 to 4.0.
 - text_overlay: add text with position/font controls.
-- split_screen: combine the source with an uploaded image or video using secondary_asset_id and layout.
-- picture_in_picture: place an uploaded image or video using secondary_asset_id and x/y/width/height. Motion is supported.
-- media_overlay: place an uploaded image or video over the current canvas using source_asset_id and x/y/width/height. Motion is supported.
+- concat: append an uploaded image/video after the current source using secondary_asset_id. Use this for requests such as join, combine sequentially, put the second video after the first, 이어 붙이기, 합치기, or make one video from two clips.
+- split_screen: show the source and an uploaded image/video at the same time using secondary_asset_id and layout. Use side_by_side or stacked.
+- picture_in_picture: place an uploaded image/video using secondary_asset_id and x/y/width/height. Motion is supported.
+- media_overlay: place an uploaded image/video over the current canvas using source_asset_id and x/y/width/height. Motion is supported.
 - masked_video: legacy/source-mask operation. Put the project source inside a circle/star/heart/triangle while secondary_asset_id is the full-canvas background. The background may be an image or video. Motion is supported.
 - masked_media: place an uploaded image or video (source_asset_id) inside a circle/star/heart/triangle over the current canvas. Motion is supported.
 - music: add an uploaded/licensed audio asset using source_asset_id. You may set volume, fade_in_seconds, fade_out_seconds, loop, and ducking.
@@ -40,6 +41,8 @@ Rules:
 7. Return no operations only when required media is missing or the request truly cannot be represented by the supported operations. In that case, clearly explain what the user needs to provide or change.
 8. Prefer media_overlay or masked_media for extra uploaded visual layers. Use masked_video only when the project source itself must be masked over another background.
 9. If the user's request is achievable with the supported operations, return at least one operation. Do not return an empty operation list just because the request is phrased casually or in a language other than English.
+10. When exactly one uploaded visual asset exists and the user says to combine/use/edit the two videos together without specifying a layout, choose concat for sequential joining. If they explicitly say side by side, split screen, top/bottom, 동시에, 나란히, or 화면을 나눠서, choose split_screen instead.
+11. When choosing concat/split_screen/picture_in_picture, set secondary_asset_id to the relevant uploaded visual asset ID. When choosing media_overlay/masked_media, set source_asset_id.
 """
 
 EMPTY_PLAN_RETRY = """
@@ -63,7 +66,15 @@ class GeminiPlanner:
     def plan(self, user_prompt: str, metadata: dict, assets: list[dict] | None = None, source_kind: str = "video") -> EditPlan:
         duration = metadata.get("duration_seconds")
         dimensions = metadata.get("dimensions", {})
-        asset_lines = [f"- id={asset['id']}; filename={asset['filename']}; kind={asset['kind']}" for asset in assets or []]
+        asset_lines = []
+        for asset in assets or []:
+            meta = asset.get("metadata", {})
+            dims = meta.get("dimensions", {})
+            asset_lines.append(
+                f"- id={asset['id']}; filename={asset['filename']}; kind={asset['kind']}; "
+                f"duration={meta.get('duration_seconds')}; dimensions={dims.get('width')}x{dims.get('height')}; "
+                f"has_audio={meta.get('has_audio', False)}"
+            )
         asset_context = "\n".join(asset_lines) if asset_lines else "(none)"
         context = (
             f"Project source kind: {source_kind}. Duration: {duration} seconds. "
