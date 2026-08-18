@@ -17,6 +17,7 @@ OperationType = Literal[
     "media_overlay",
     "masked_video",
     "masked_media",
+    "concat",
     "music",
     "style_transfer",
 ]
@@ -83,7 +84,7 @@ class EditOperation(BaseModel):
             raise ValueError("volume requires volume")
         if self.type == "text_overlay" and not self.text:
             raise ValueError("text_overlay requires text")
-        if self.type in {"split_screen", "picture_in_picture"} and not self.secondary_asset_id:
+        if self.type in {"split_screen", "picture_in_picture", "concat"} and not self.secondary_asset_id:
             raise ValueError(f"{self.type} requires secondary_asset_id")
         if self.type == "media_overlay" and not self.source_asset_id:
             raise ValueError("media_overlay requires source_asset_id")
