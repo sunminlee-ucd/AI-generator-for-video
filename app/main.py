@@ -4,20 +4,21 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
+import os
 import shutil
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import MAX_UPLOAD_MB, PROJECTS_DIR
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, MAX_UPLOAD_MB, PROJECTS_DIR
 from app.schemas import ApplyPlanRequest, CommandRequest, EditPlan, ReplaceOperationsRequest
 from app.services.ffmpeg_engine import FFmpegEngine
 from app.services.gemini_planner import GeminiPlanner
 from app.services.project_store import ProjectStore
 from app.services.wan_engine import WanEngine
 
-app = FastAPI(title="AI Video Editor", version="0.3.0")
+app = FastAPI(title="AI Video Editor", version="0.4.0")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 store = ProjectStore()
@@ -34,7 +35,20 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "media_kinds": ["video", "image", "audio"], "native_clients": ["ios", "android"]}
+    return {
+        "status": "ok",
+        "media_kinds": ["video", "image", "audio"],
+        "native_clients": ["ios", "android"],
+        "ai": {
+            "provider": "gemini",
+            "configured": bool(GEMINI_API_KEY),
+            "model": GEMINI_MODEL,
+        },
+        "runtime": {
+            "service": os.getenv("K_SERVICE"),
+            "revision": os.getenv("K_REVISION"),
+        },
+    }
 
 
 @app.post("/api/projects")
@@ -239,25 +253,9 @@ def _update_job(job_id: str, **changes) -> None:
             jobs[job_id].update(changes)
 
 
-def _public_asset(project_id: str, asset: dict) -> dict:
-    return {
-        "id": asset["id"],
-        "filename": asset["filename"],
-        "kind": asset["kind"],
-        "metadata": asset["metadata"],
-        "url": f"/api/projects/{project_id}/assets/{asset['id']}",
-    }
-
-
 def _public_project(project: dict) -> dict:
-    return {
-        "id": project["id"],
-        "filename": project["filename"],
-        "source_kind": project.get("source_kind", "video"),
-        "metadata": project["metadata"],
-        "operations": project.get("operations", []),
-        "assets": [_public_asset(project["id"], asset) for asset in project.get("assets", [])],
-        "history": project.get("history", []),
-        "source_url": f"/api/projects/{project['id']}/media/source",
-        "preview_url": f"/api/projects/{project['id']}/media/preview" if project.get("preview_path") else None,
-    }
+    return store.public_project(project)
+
+
+def _public_asset(project_id: str, asset: dict) -> dict:
+    return store.public_asset(project_id, asset)
