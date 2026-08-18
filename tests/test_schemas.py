@@ -15,3 +15,13 @@ def test_plan_detects_wan():
         operations=[EditOperation(type="style_transfer", style_prompt="hand-painted animation")],
     )
     assert plan.uses_wan is True
+
+
+def test_mask_requires_background_video():
+    with pytest.raises(ValidationError):
+        EditOperation(type="masked_video", shape="star")
+
+
+def test_music_requires_audio_asset():
+    with pytest.raises(ValidationError):
+        EditOperation(type="music", volume=0.25)
