@@ -17,7 +17,7 @@ from app.services.gemini_planner import GeminiPlanner
 from app.services.project_store import ProjectStore
 from app.services.wan_engine import WanEngine
 
-app = FastAPI(title="AI Video Editor", version="0.2.0")
+app = FastAPI(title="AI Video Editor", version="0.3.0")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 store = ProjectStore()
@@ -34,41 +34,40 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "media_kinds": ["video", "image", "audio"], "native_clients": ["ios", "android"]}
 
 
 @app.post("/api/projects")
-def create_project(file: UploadFile = File(...)):
+def create_project(file: UploadFile = File(...), still_duration_seconds: float = Form(5.0)):
+    if not 0.5 <= still_duration_seconds <= 120:
+        raise HTTPException(status_code=400, detail="still_duration_seconds must be between 0.5 and 120")
     temp_path = _save_upload(file)
     try:
-        metadata = ffmpeg.probe(temp_path)
-        if not metadata["has_video"]:
-            raise ValueError("The source must contain a video stream")
+        metadata = ffmpeg.inspect_media(temp_path, still_duration_seconds)
+        if metadata["kind"] not in {"video", "image"}:
+            raise ValueError("The project source must be a photo or video")
     except Exception as exc:
         temp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"Invalid video: {exc}") from exc
-    project = store.create(file.filename or "video.mp4", temp_path, metadata)
+        raise HTTPException(status_code=400, detail=f"Invalid source media: {exc}") from exc
+    project = store.create(file.filename or f"source{temp_path.suffix}", temp_path, metadata, source_kind=metadata["kind"])
     return _public_project(project)
 
 
 @app.post("/api/projects/{project_id}/assets")
-def upload_asset(project_id: str, file: UploadFile = File(...), kind: str = Form("auto")):
+def upload_asset(project_id: str, file: UploadFile = File(...), kind: str = Form("auto"), still_duration_seconds: float = Form(5.0)):
     try:
         store.get(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
-    if kind not in {"auto", "video", "audio"}:
-        raise HTTPException(status_code=400, detail="kind must be auto, video, or audio")
+    if kind not in {"auto", "video", "image", "audio"}:
+        raise HTTPException(status_code=400, detail="kind must be auto, video, image, or audio")
     temp_path = _save_upload(file)
     try:
-        metadata = ffmpeg.probe(temp_path)
+        metadata = ffmpeg.inspect_media(temp_path, still_duration_seconds)
     except Exception as exc:
         temp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"Invalid media: {exc}") from exc
-    detected = "video" if metadata["has_video"] else "audio" if metadata["has_audio"] else None
-    if not detected:
-        temp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="File contains no supported video/audio stream")
+    detected = metadata["kind"]
     if kind != "auto" and kind != detected:
         temp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"Expected {kind}, detected {detected}")
@@ -91,14 +90,10 @@ def command(project_id: str, request: CommandRequest):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
     try:
-        plan = GeminiPlanner().plan(request.prompt, project["metadata"], project.get("assets", []))
+        plan = GeminiPlanner().plan(request.prompt, project["metadata"], project.get("assets", []), project.get("source_kind", "video"))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Gemini planning failed: {exc}") from exc
-    return {
-        "status": "proposal",
-        "assistant_message": plan.assistant_message,
-        "plan": plan.model_dump(mode="json"),
-    }
+    return {"status": "proposal", "assistant_message": plan.assistant_message, "plan": plan.model_dump(mode="json")}
 
 
 @app.post("/api/projects/{project_id}/apply-plan")
@@ -118,8 +113,7 @@ def replace_operations(project_id: str, request: ReplaceOperationsRequest):
         store.replace_operations(project_id, request.operations)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
-    plan = EditPlan(assistant_message="Updated the fine-tuned edit settings.", operations=[])
-    return _queue_render(project_id, plan)
+    return _queue_render(project_id, EditPlan(assistant_message="Updated the fine-tuned edit settings.", operations=[]))
 
 
 @app.get("/api/jobs/{job_id}")
@@ -140,8 +134,9 @@ def undo(project_id: str):
     return _queue_render(project_id, EditPlan(assistant_message="Undid the last AI edit.", operations=[]))
 
 
+@app.get("/api/projects/{project_id}/media/{kind}")
 @app.get("/api/projects/{project_id}/video/{kind}")
-def project_video(project_id: str, kind: str):
+def project_media(project_id: str, kind: str):
     try:
         project = store.get(project_id)
     except KeyError as exc:
@@ -151,9 +146,9 @@ def project_video(project_id: str, kind: str):
     elif kind == "preview" and project.get("preview_path"):
         path = Path(project["preview_path"])
     else:
-        raise HTTPException(status_code=404, detail="Video not available")
+        raise HTTPException(status_code=404, detail="Media not available")
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Video not available")
+        raise HTTPException(status_code=404, detail="Media not available")
     return FileResponse(path)
 
 
@@ -216,7 +211,14 @@ def _render_job(job_id: str, project_id: str) -> None:
         project_dir = PROJECTS_DIR / project_id
         standard_ops = [op for op in operations if op.type != "style_transfer"]
         base_preview = project_dir / "preview_base.mp4"
-        ffmpeg.render(source, standard_ops, base_preview, assets)
+        ffmpeg.render(
+            source,
+            standard_ops,
+            base_preview,
+            assets,
+            source_kind=project.get("source_kind", "video"),
+            source_duration=float(project.get("metadata", {}).get("duration_seconds") or 5.0),
+        )
         style_ops = [op for op in operations if op.enabled and op.type == "style_transfer"]
         if style_ops:
             final = project_dir / "preview_wan.mp4"
@@ -226,7 +228,7 @@ def _render_job(job_id: str, project_id: str) -> None:
             final = project_dir / "preview.mp4"
             shutil.copy2(base_preview, final)
         store.set_preview(project_id, final)
-        _update_job(job_id, status="completed", output_url=f"/api/projects/{project_id}/video/preview")
+        _update_job(job_id, status="completed", output_url=f"/api/projects/{project_id}/media/preview")
     except Exception as exc:
         _update_job(job_id, status="failed", error=str(exc))
 
@@ -251,10 +253,11 @@ def _public_project(project: dict) -> dict:
     return {
         "id": project["id"],
         "filename": project["filename"],
+        "source_kind": project.get("source_kind", "video"),
         "metadata": project["metadata"],
         "operations": project.get("operations", []),
         "assets": [_public_asset(project["id"], asset) for asset in project.get("assets", [])],
         "history": project.get("history", []),
-        "source_url": f"/api/projects/{project['id']}/video/source",
-        "preview_url": f"/api/projects/{project['id']}/video/preview" if project.get("preview_path") else None,
+        "source_url": f"/api/projects/{project['id']}/media/source",
+        "preview_url": f"/api/projects/{project['id']}/media/preview" if project.get("preview_path") else None,
     }
