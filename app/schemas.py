@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+AssetKind = Literal["video", "image", "audio"]
 OperationType = Literal[
     "trim",
     "speed",
@@ -13,11 +14,12 @@ OperationType = Literal[
     "text_overlay",
     "split_screen",
     "picture_in_picture",
+    "media_overlay",
     "masked_video",
+    "masked_media",
     "music",
     "style_transfer",
 ]
-
 EasingType = Literal["linear", "ease_in", "ease_out", "ease_in_out"]
 
 
@@ -33,17 +35,14 @@ class EditOperation(BaseModel):
     type: OperationType
     enabled: bool = True
 
-    # Shared timing / media fields.
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
     source_asset_id: str | None = None
     secondary_asset_id: str | None = None
 
-    # Basic video / audio editing.
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
     volume: float | None = Field(default=None, ge=0.0, le=4.0)
 
-    # Text.
     text: str | None = Field(default=None, max_length=300)
     position: Literal["top", "center", "bottom"] | None = None
     font_family: str | None = Field(default="DejaVu Sans", max_length=120)
@@ -52,12 +51,11 @@ class EditOperation(BaseModel):
     text_background_color: str | None = Field(default="black@0.45", max_length=40)
     bold: bool = False
 
-    # Composition / masks.
     layout: Literal["side_by_side", "stacked"] | None = None
     ratio: float | None = Field(default=0.5, ge=0.15, le=0.85)
     shape: Literal["circle", "star", "heart", "triangle"] | None = None
-    x: int | None = Field(default=40, ge=0)
-    y: int | None = Field(default=40, ge=0)
+    x: int | None = Field(default=40, ge=-8192, le=8192)
+    y: int | None = Field(default=40, ge=-8192, le=8192)
     width: int | None = Field(default=360, ge=32, le=4096)
     height: int | None = Field(default=360, ge=32, le=4096)
     rotation: float | None = Field(default=0, ge=-360, le=360)
@@ -68,13 +66,11 @@ class EditOperation(BaseModel):
     fit: Literal["cover", "contain"] | None = None
     motion_keyframes: list[MotionKeyframe] = Field(default_factory=list)
 
-    # Background music.
     fade_in_seconds: float | None = Field(default=0.0, ge=0, le=30)
     fade_out_seconds: float | None = Field(default=0.0, ge=0, le=30)
     loop: bool = True
     ducking: bool = False
 
-    # Generative video.
     style_prompt: str | None = Field(default=None, max_length=1500)
 
     @model_validator(mode="after")
@@ -89,9 +85,16 @@ class EditOperation(BaseModel):
             raise ValueError("text_overlay requires text")
         if self.type in {"split_screen", "picture_in_picture"} and not self.secondary_asset_id:
             raise ValueError(f"{self.type} requires secondary_asset_id")
+        if self.type == "media_overlay" and not self.source_asset_id:
+            raise ValueError("media_overlay requires source_asset_id")
+        if self.type == "masked_media":
+            if not self.source_asset_id:
+                raise ValueError("masked_media requires source_asset_id")
+            if not self.shape:
+                raise ValueError("masked_media requires shape")
         if self.type == "masked_video":
             if not self.secondary_asset_id:
-                raise ValueError("masked_video requires secondary_asset_id for the background video")
+                raise ValueError("masked_video requires secondary_asset_id for the background media")
             if not self.shape:
                 raise ValueError("masked_video requires shape")
         if self.type == "music" and not self.source_asset_id:
@@ -99,8 +102,8 @@ class EditOperation(BaseModel):
         if self.type == "style_transfer" and not self.style_prompt:
             raise ValueError("style_transfer requires style_prompt")
         if self.motion_keyframes:
-            if self.type not in {"masked_video", "picture_in_picture"}:
-                raise ValueError("motion_keyframes are supported only for masked_video and picture_in_picture")
+            if self.type not in {"masked_video", "masked_media", "picture_in_picture", "media_overlay"}:
+                raise ValueError("motion_keyframes are supported only for visual layer operations")
             ordered = sorted(self.motion_keyframes, key=lambda frame: frame.time_seconds)
             for previous, current in zip(ordered, ordered[1:]):
                 if abs(previous.time_seconds - current.time_seconds) < 1e-6:
