@@ -207,24 +207,24 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(15), dp(16), dp(15))
         }
-        val text = LinearLayout(this).apply {
+        val textColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         }
-        text.addView(TextView(this).apply {
-            this.text = title
+        textColumn.addView(TextView(this).apply {
+            text = title
             textSize = 18f
             setTextColor(deepGreen)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
-        text.addView(TextView(this).apply {
-            this.text = subtitle
+        textColumn.addView(TextView(this).apply {
+            text = subtitle
             textSize = 12f
             setTextColor(muted)
         })
-        header.addView(text)
+        header.addView(textColumn)
         header.addView(TextView(this).apply {
-            text = if (expandedPanel == key) "⌃" else "⌄"
+            this.text = if (expandedPanel == key) "⌃" else "⌄"
             textSize = 24f
             setTextColor(accent)
             gravity = Gravity.CENTER
@@ -356,7 +356,7 @@ class MainActivity : Activity() {
             details.addView(spinner, matchWrap())
         }
         card.addView(details)
-        card.addView(secondaryButton("Adjust") { button ->
+        card.addView(adjustButton("Adjust") { button ->
             details.visibility = if (details.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             button.text = if (details.visibility == View.VISIBLE) "Done" else "Adjust"
         }, matchWrap())
@@ -571,7 +571,7 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun secondaryButton(text: String, onClick: (Button) -> Unit) = Button(this).apply {
+    private fun adjustButton(text: String, onClick: (Button) -> Unit) = Button(this).apply {
         this.text = text
         minimumHeight = dp(50)
         setTextColor(deepGreen)
