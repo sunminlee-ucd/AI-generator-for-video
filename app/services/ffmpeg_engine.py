@@ -12,6 +12,8 @@ from PIL import Image, ImageDraw, ImageFilter
 from app.config import FFMPEG_BIN, FFPROBE_BIN
 from app.schemas import EditOperation
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
 
 class FFmpegError(RuntimeError):
     pass
@@ -27,24 +29,43 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 class FFmpegEngine:
     def probe(self, source: Path) -> dict:
         result = _run([
-            FFPROBE_BIN,
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration:stream=index,codec_type,width,height",
-            "-of",
-            "json",
-            str(source),
+            FFPROBE_BIN, "-v", "error",
+            "-show_entries", "format=duration:stream=index,codec_type,width,height",
+            "-of", "json", str(source),
         ])
-        payload = json.loads(result.stdout)
+        payload = json.loads(result.stdout or "{}")
         streams = payload.get("streams", [])
         video = next((s for s in streams if s.get("codec_type") == "video"), {})
+        duration_raw = payload.get("format", {}).get("duration")
+        duration = round(float(duration_raw), 3) if duration_raw not in {None, "N/A"} else 0.0
         return {
-            "duration_seconds": round(float(payload["format"]["duration"]), 3),
+            "duration_seconds": duration,
             "dimensions": {"width": video.get("width"), "height": video.get("height")},
             "has_video": bool(video),
             "has_audio": any(s.get("codec_type") == "audio" for s in streams),
         }
+
+    def inspect_media(self, source: Path, still_duration_seconds: float = 5.0) -> dict:
+        if source.suffix.lower() in IMAGE_EXTENSIONS:
+            try:
+                with Image.open(source) as image:
+                    width, height = image.size
+                return {
+                    "kind": "image",
+                    "duration_seconds": round(float(still_duration_seconds), 3),
+                    "dimensions": {"width": width, "height": height},
+                    "has_video": False,
+                    "has_audio": False,
+                }
+            except Exception as exc:
+                raise FFmpegError(f"Invalid image: {exc}") from exc
+
+        metadata = self.probe(source)
+        if metadata["has_video"]:
+            return {"kind": "video", **metadata}
+        if metadata["has_audio"]:
+            return {"kind": "audio", **metadata}
+        raise FFmpegError("File contains no supported image, video, or audio media")
 
     def render(
         self,
@@ -52,32 +73,42 @@ class FFmpegEngine:
         operations: list[EditOperation],
         output: Path,
         assets: dict[str, dict] | None = None,
+        source_kind: str = "video",
+        source_duration: float | None = None,
     ) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
         assets = assets or {}
         enabled = [op for op in operations if op.enabled and op.type != "style_transfer"]
-        if not enabled:
-            shutil.copy2(source, output)
-            return output
-
-        basic = [op for op in enabled if op.type in {"trim", "speed", "mute", "volume"}]
-        compositions = [op for op in enabled if op.type in {"split_screen", "picture_in_picture", "masked_video"}]
-        texts = [op for op in enabled if op.type == "text_overlay"]
-        music = [op for op in enabled if op.type == "music"]
 
         with tempfile.TemporaryDirectory(prefix="ai-video-") as temp_dir_str:
             temp_dir = Path(temp_dir_str)
+            normalized_source = source
+            if source_kind == "image":
+                normalized_source = temp_dir / "source_image.mp4"
+                self._image_to_video(source, normalized_source, source_duration or 5.0)
+            elif source_kind != "video":
+                raise FFmpegError("Project source must be an image or video")
+
+            basic = [op for op in enabled if op.type in {"trim", "speed", "mute", "volume"}]
+            compositions = [op for op in enabled if op.type in {"split_screen", "picture_in_picture", "media_overlay", "masked_video", "masked_media"}]
+            texts = [op for op in enabled if op.type == "text_overlay"]
+            music = [op for op in enabled if op.type == "music"]
+
             current = temp_dir / "base.mp4"
-            self._render_basic(source, basic, current)
+            self._render_basic(normalized_source, basic, current)
 
             for index, op in enumerate(compositions):
                 next_path = temp_dir / f"composition_{index}.mp4"
                 if op.type == "split_screen":
-                    self._render_split_screen(current, self._asset_path(op.secondary_asset_id, assets), op, next_path)
+                    self._render_split_screen(current, self._asset(op.secondary_asset_id, assets), op, next_path)
                 elif op.type == "picture_in_picture":
-                    self._render_pip(current, self._asset_path(op.secondary_asset_id, assets), op, next_path)
+                    self._render_overlay(current, self._asset(op.secondary_asset_id, assets), op, next_path)
+                elif op.type == "media_overlay":
+                    self._render_overlay(current, self._asset(op.source_asset_id, assets), op, next_path)
+                elif op.type == "masked_media":
+                    self._render_masked_asset(current, self._asset(op.source_asset_id, assets), op, next_path, temp_dir)
                 else:
-                    self._render_masked(current, self._asset_path(op.secondary_asset_id, assets), op, next_path, temp_dir)
+                    self._render_masked_source(current, self._asset(op.secondary_asset_id, assets), op, next_path, temp_dir)
                 current = next_path
 
             for index, op in enumerate(texts):
@@ -92,6 +123,17 @@ class FFmpegEngine:
 
             shutil.copy2(current, output)
         return output
+
+    def _image_to_video(self, image: Path, output: Path, duration: float) -> None:
+        duration = max(0.1, float(duration))
+        cmd = [
+            FFMPEG_BIN, "-y", "-loop", "1", "-i", str(image),
+            "-t", f"{duration:.3f}", "-r", "30",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+            "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-movflags", "+faststart", str(output),
+        ]
+        _run(cmd)
 
     def _render_basic(self, source: Path, operations: list[EditOperation], output: Path) -> None:
         if not operations:
@@ -156,89 +198,79 @@ class FFmpegEngine:
         y = "h*0.08" if position == "top" else "(h-text_h)/2" if position == "center" else "h-text_h-h*0.08"
         text = self._escape_drawtext(op.text or "")
         font = self._escape_drawtext(op.font_family or "DejaVu Sans")
-        fontsize = op.font_size or 48
-        fontcolor = op.font_color or "white"
-        boxcolor = op.text_background_color or "black@0.45"
-        enable = ""
-        if op.start_seconds is not None or op.end_seconds is not None:
-            start = op.start_seconds or 0
-            end = op.end_seconds if op.end_seconds is not None else metadata["duration_seconds"]
-            enable = f":enable='between(t,{start:.3f},{end:.3f})'"
+        enable = self._timeline_enable(op, float(metadata["duration_seconds"]))
         drawtext = (
             f"drawtext=text='{text}':font='{font}':x=(w-text_w)/2:y={y}:"
-            f"fontsize={fontsize}:fontcolor={fontcolor}:box=1:boxcolor={boxcolor}:boxborderw=12{enable}"
+            f"fontsize={op.font_size or 48}:fontcolor={op.font_color or 'white'}:box=1:"
+            f"boxcolor={op.text_background_color or 'black@0.45'}:boxborderw=12{enable}"
         )
         cmd = [FFMPEG_BIN, "-y", "-i", str(source), "-vf", drawtext, "-map", "0:v:0", "-map", "0:a?"]
         cmd += self._encoding_args(metadata["has_audio"])
         cmd += [str(output)]
         _run(cmd)
 
-    def _render_split_screen(self, source: Path, second: Path, op: EditOperation, output: Path) -> None:
+    def _render_split_screen(self, source: Path, second: dict, op: EditOperation, output: Path) -> None:
         meta = self.probe(source)
         w = int(meta["dimensions"]["width"] or 1280)
         h = int(meta["dimensions"]["height"] or 720)
+        duration = float(meta["duration_seconds"])
         ratio = op.ratio or 0.5
         if (op.layout or "side_by_side") == "stacked":
             h1 = max(2, int(h * ratio) // 2 * 2)
             h2 = max(2, h - h1)
-            fc = (
-                f"[0:v]scale={w}:{h1}:force_original_aspect_ratio=increase,crop={w}:{h1}[a];"
-                f"[1:v]scale={w}:{h2}:force_original_aspect_ratio=increase,crop={w}:{h2}[b];"
-                "[a][b]vstack=inputs=2[v]"
-            )
+            fc = f"[0:v]scale={w}:{h1}:force_original_aspect_ratio=increase,crop={w}:{h1}[a];[1:v]scale={w}:{h2}:force_original_aspect_ratio=increase,crop={w}:{h2}[b];[a][b]vstack=inputs=2[v]"
         else:
             w1 = max(2, int(w * ratio) // 2 * 2)
             w2 = max(2, w - w1)
-            fc = (
-                f"[0:v]scale={w1}:{h}:force_original_aspect_ratio=increase,crop={w1}:{h}[a];"
-                f"[1:v]scale={w2}:{h}:force_original_aspect_ratio=increase,crop={w2}:{h}[b];"
-                "[a][b]hstack=inputs=2[v]"
-            )
-        cmd = [FFMPEG_BIN, "-y", "-i", str(source), "-i", str(second), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-shortest"]
+            fc = f"[0:v]scale={w1}:{h}:force_original_aspect_ratio=increase,crop={w1}:{h}[a];[1:v]scale={w2}:{h}:force_original_aspect_ratio=increase,crop={w2}:{h}[b];[a][b]hstack=inputs=2[v]"
+        cmd = [FFMPEG_BIN, "-y", "-i", str(source), *self._visual_input(second), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-t", f"{duration:.3f}"]
         cmd += self._encoding_args(meta["has_audio"])
         cmd += [str(output)]
         _run(cmd)
 
-    def _render_pip(self, source: Path, second: Path, op: EditOperation, output: Path) -> None:
+    def _render_overlay(self, source: Path, layer: dict, op: EditOperation, output: Path) -> None:
         meta = self.probe(source)
+        duration = float(meta["duration_seconds"])
         width = op.width or 360
         height = op.height or 202
-        default_x = op.x if op.x is not None else 20
-        default_y = op.y if op.y is not None else 20
-        x_expr, y_expr = self._motion_coordinates(op, default_x, default_y)
-        enable = self._timeline_enable(op, float(meta["duration_seconds"]))
-        fc = (
-            f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}[pip];"
-            f"[0:v][pip]overlay=x='{x_expr}':y='{y_expr}':eval=frame:shortest=1{enable}[v]"
-        )
-        cmd = [FFMPEG_BIN, "-y", "-i", str(source), "-i", str(second), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-shortest"]
+        x_expr, y_expr = self._motion_coordinates(op, op.x if op.x is not None else 20, op.y if op.y is not None else 20)
+        enable = self._timeline_enable(op, duration)
+        fc = f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}[layer];[0:v][layer]overlay=x='{x_expr}':y='{y_expr}':eval=frame{enable}[v]"
+        cmd = [FFMPEG_BIN, "-y", "-i", str(source), *self._visual_input(layer), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-t", f"{duration:.3f}"]
         cmd += self._encoding_args(meta["has_audio"])
         cmd += [str(output)]
         _run(cmd)
 
-    def _render_masked(self, foreground: Path, background: Path, op: EditOperation, output: Path, temp_dir: Path) -> None:
+    def _render_masked_source(self, foreground: Path, background: dict, op: EditOperation, output: Path, temp_dir: Path) -> None:
         meta = self.probe(foreground)
+        duration = float(meta["duration_seconds"])
         canvas_w = int(meta["dimensions"]["width"] or 1280)
         canvas_h = int(meta["dimensions"]["height"] or 720)
         mask_w = min(op.width or 360, canvas_w)
         mask_h = min(op.height or 360, canvas_h)
-        default_x = op.x if op.x is not None else 40
-        default_y = op.y if op.y is not None else 40
-        x_expr, y_expr = self._motion_coordinates(op, default_x, default_y)
-        enable = self._timeline_enable(op, float(meta["duration_seconds"]))
+        x_expr, y_expr = self._motion_coordinates(op, op.x if op.x is not None else 40, op.y if op.y is not None else 40)
+        enable = self._timeline_enable(op, duration)
         mask = temp_dir / f"mask_{op.id}.png"
         self._create_mask(mask, op.shape or "star", mask_w, mask_h, op.rotation or 0, op.feather or 0, op.opacity or 1.0)
-        fc = (
-            f"[1:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=increase,crop={canvas_w}:{canvas_h}[bg];"
-            f"[0:v]scale={mask_w}:{mask_h}:force_original_aspect_ratio=increase,crop={mask_w}:{mask_h},format=rgba[fg];"
-            "[2:v]format=gray[mask];"
-            "[fg][mask]alphamerge[cut];"
-            f"[bg][cut]overlay=x='{x_expr}':y='{y_expr}':eval=frame:shortest=1{enable}[v]"
-        )
-        cmd = [
-            FFMPEG_BIN, "-y", "-i", str(foreground), "-i", str(background), "-loop", "1", "-i", str(mask),
-            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-shortest",
-        ]
+        fc = f"[1:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=increase,crop={canvas_w}:{canvas_h}[bg];[0:v]scale={mask_w}:{mask_h}:force_original_aspect_ratio=increase,crop={mask_w}:{mask_h},format=rgba[fg];[2:v]format=gray[mask];[fg][mask]alphamerge[cut];[bg][cut]overlay=x='{x_expr}':y='{y_expr}':eval=frame{enable}[v]"
+        cmd = [FFMPEG_BIN, "-y", "-i", str(foreground), *self._visual_input(background), "-loop", "1", "-i", str(mask), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-t", f"{duration:.3f}"]
+        cmd += self._encoding_args(meta["has_audio"])
+        cmd += [str(output)]
+        _run(cmd)
+
+    def _render_masked_asset(self, background: Path, foreground: dict, op: EditOperation, output: Path, temp_dir: Path) -> None:
+        meta = self.probe(background)
+        duration = float(meta["duration_seconds"])
+        canvas_w = int(meta["dimensions"]["width"] or 1280)
+        canvas_h = int(meta["dimensions"]["height"] or 720)
+        mask_w = min(op.width or 360, canvas_w)
+        mask_h = min(op.height or 360, canvas_h)
+        x_expr, y_expr = self._motion_coordinates(op, op.x if op.x is not None else 40, op.y if op.y is not None else 40)
+        enable = self._timeline_enable(op, duration)
+        mask = temp_dir / f"mask_asset_{op.id}.png"
+        self._create_mask(mask, op.shape or "star", mask_w, mask_h, op.rotation or 0, op.feather or 0, op.opacity or 1.0)
+        fc = f"[1:v]scale={mask_w}:{mask_h}:force_original_aspect_ratio=increase,crop={mask_w}:{mask_h},format=rgba[fg];[2:v]format=gray[mask];[fg][mask]alphamerge[cut];[0:v][cut]overlay=x='{x_expr}':y='{y_expr}':eval=frame{enable}[v]"
+        cmd = [FFMPEG_BIN, "-y", "-i", str(background), *self._visual_input(foreground), "-loop", "1", "-i", str(mask), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-t", f"{duration:.3f}"]
         cmd += self._encoding_args(meta["has_audio"])
         cmd += [str(output)]
         _run(cmd)
@@ -252,15 +284,12 @@ class FFmpegEngine:
         play_duration = max(0.05, end - start)
         delay_ms = int(start * 1000)
         filters = [f"[1:a]atrim=duration={play_duration:.3f},asetpts=PTS-STARTPTS,volume={volume:.4f}"]
-        fade_in = op.fade_in_seconds or 0.0
-        fade_out = op.fade_out_seconds or 0.0
-        if fade_in > 0:
-            filters[-1] += f",afade=t=in:st=0:d={min(fade_in, play_duration):.3f}"
-        if fade_out > 0:
-            out_start = max(0.0, play_duration - fade_out)
-            filters[-1] += f",afade=t=out:st={out_start:.3f}:d={min(fade_out, play_duration):.3f}"
+        if (op.fade_in_seconds or 0) > 0:
+            filters[-1] += f",afade=t=in:st=0:d={min(op.fade_in_seconds or 0, play_duration):.3f}"
+        if (op.fade_out_seconds or 0) > 0:
+            fade = min(op.fade_out_seconds or 0, play_duration)
+            filters[-1] += f",afade=t=out:st={max(0.0, play_duration-fade):.3f}:d={fade:.3f}"
         filters[-1] += f",adelay={delay_ms}|{delay_ms}[music]"
-
         if meta["has_audio"]:
             if op.ducking:
                 filters.append("[music][0:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[ducked]")
@@ -269,12 +298,38 @@ class FFmpegEngine:
                 filters.append("[0:a][music]amix=inputs=2:duration=first:normalize=0[a]")
         else:
             filters.append("[music]apad=pad_dur=1[a]")
-
         loop_args = ["-stream_loop", "-1"] if op.loop else []
         cmd = [FFMPEG_BIN, "-y", "-i", str(source), *loop_args, "-i", str(music), "-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[a]", "-t", f"{duration:.3f}"]
         cmd += self._encoding_args(True)
         cmd += [str(output)]
         _run(cmd)
+
+    @staticmethod
+    def _visual_input(asset: dict) -> list[str]:
+        path = str(asset["path"])
+        if asset.get("kind") == "image":
+            return ["-loop", "1", "-i", path]
+        return ["-stream_loop", "-1", "-i", path]
+
+    @staticmethod
+    def _asset(asset_id: str | None, assets: dict[str, dict]) -> dict:
+        if not asset_id or asset_id not in assets:
+            raise FFmpegError(f"Missing media asset: {asset_id}")
+        asset = assets[asset_id]
+        if asset.get("kind") not in {"video", "image"}:
+            raise FFmpegError(f"Asset is not visual media: {asset_id}")
+        if not Path(asset["path"]).exists():
+            raise FFmpegError(f"Media asset file is missing: {asset_id}")
+        return asset
+
+    @staticmethod
+    def _asset_path(asset_id: str | None, assets: dict[str, dict]) -> Path:
+        if not asset_id or asset_id not in assets:
+            raise FFmpegError(f"Missing media asset: {asset_id}")
+        path = Path(assets[asset_id]["path"])
+        if not path.exists():
+            raise FFmpegError(f"Media asset file is missing: {asset_id}")
+        return path
 
     @classmethod
     def _motion_coordinates(cls, op: EditOperation, default_x: int, default_y: int) -> tuple[str, str]:
@@ -289,7 +344,6 @@ class FFmpegEngine:
             return str(default)
         if len(frames) == 1:
             return f"{float(getattr(frames[0], field)):.6f}"
-
         parts: list[tuple[float, str]] = []
         for current, following in zip(frames, frames[1:]):
             t0 = float(current.time_seconds)
@@ -299,9 +353,7 @@ class FFmpegEngine:
             duration = max(0.000001, t1 - t0)
             progress = f"((t-{t0:.6f})/{duration:.6f})"
             eased = cls._easing_expression(progress, current.easing)
-            segment = f"({v0:.6f}+({v1 - v0:.6f})*({eased}))"
-            parts.append((t1, segment))
-
+            parts.append((t1, f"({v0:.6f}+({v1-v0:.6f})*({eased}))"))
         expression = f"{float(getattr(frames[-1], field)):.6f}"
         for end_time, segment in reversed(parts):
             expression = f"if(lt(t,{end_time:.6f}),{segment},{expression})"
@@ -335,15 +387,6 @@ class FFmpegEngine:
         return output
 
     @staticmethod
-    def _asset_path(asset_id: str | None, assets: dict[str, dict]) -> Path:
-        if not asset_id or asset_id not in assets:
-            raise FFmpegError(f"Missing media asset: {asset_id}")
-        path = Path(assets[asset_id]["path"])
-        if not path.exists():
-            raise FFmpegError(f"Media asset file is missing: {asset_id}")
-        return path
-
-    @staticmethod
     def _encoding_args(has_audio: bool) -> list[str]:
         args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
         if has_audio:
@@ -366,9 +409,7 @@ class FFmpegEngine:
                 t = 2 * math.pi * i / 240
                 x = 16 * math.sin(t) ** 3
                 y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
-                px = width / 2 + x * (width - 2 * pad) / 34
-                py = height / 2 - y * (height - 2 * pad) / 34
-                points.append((px, py))
+                points.append((width / 2 + x * (width - 2 * pad) / 34, height / 2 - y * (height - 2 * pad) / 34))
             draw.polygon(points, fill=int(255 * opacity))
         else:
             points = []
