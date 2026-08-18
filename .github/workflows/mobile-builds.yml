@@ -1,0 +1,59 @@
+name: Native mobile builds
+
+on:
+  push:
+    branches: [agent/ai-video-editor-mvp]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Run backend tests
+        run: pytest -q
+
+  android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android platform
+        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Build installable debug APK
+        working-directory: android
+        run: gradle :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIEditor-Android-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  ios-simulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: xcrun xcodebuild -version
+      - name: Build native iOS app
+        working-directory: ios/AIEditor
+        run: xcrun xcodebuild -project AIEditor.xcodeproj -scheme AIEditor -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIEditor-iOS-simulator-app
+          path: ios/AIEditor/build/Build/Products/Debug-iphonesimulator/AIEditor.app
