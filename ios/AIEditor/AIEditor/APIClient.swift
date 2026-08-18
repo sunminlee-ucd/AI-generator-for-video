@@ -2,9 +2,17 @@ import Foundation
 
 actor APIClient {
     static let shared = APIClient()
+    private let defaultServer = "https://ai-generator-for-video-git-279005246322.europe-west2.run.app"
+
     var baseURL: URL {
-        let saved = UserDefaults.standard.string(forKey: "serverURL") ?? "http://localhost:8000"
-        return URL(string: saved.trimmingCharacters(in: CharacterSet(charactersIn: "/")))!
+        let saved = UserDefaults.standard.string(forKey: "serverURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effective: String
+        if saved == nil || saved?.isEmpty == true || saved == "http://localhost:8000" || saved == "http://10.0.2.2:8000" {
+            effective = defaultServer
+        } else {
+            effective = saved!
+        }
+        return URL(string: effective.trimmingCharacters(in: CharacterSet(charactersIn: "/")))!
     }
 
     private let decoder = JSONDecoder()

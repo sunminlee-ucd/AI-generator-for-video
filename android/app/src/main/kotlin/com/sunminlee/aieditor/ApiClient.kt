@@ -8,7 +8,21 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class ApiClient(private val context: Context) {
-    private val base: String get() = context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("server", "http://10.0.2.2:8000")!!.trimEnd('/')
+    private val base: String get() {
+        val saved = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+            .getString("server", null)
+            ?.trim()
+            ?.trimEnd('/')
+        return if (
+            saved.isNullOrBlank() ||
+            saved == "http://10.0.2.2:8000" ||
+            saved == "http://localhost:8000"
+        ) {
+            "https://ai-generator-for-video-git-279005246322.europe-west2.run.app"
+        } else {
+            saved
+        }
+    }
 
     fun absolute(path: String): String = if (path.startsWith("http")) path else base + path
 
