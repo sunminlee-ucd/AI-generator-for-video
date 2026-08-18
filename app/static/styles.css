@@ -26,6 +26,16 @@ form { border-top:1px solid #29292f; padding:14px; } textarea, input, select { w
 .operations { display:grid; gap:12px; margin-top:14px; }.operation { border:1px solid #33333b; background:#151518; border-radius:15px; padding:14px; }.operation-head { margin-bottom:12px; }.operation-head small { display:block; color:#777784; margin-top:3px; }.op-type { font-weight:800; text-transform:capitalize; }
 .control-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }.control-grid label { display:grid; gap:6px; color:#b9b9c1; font-size:12px; }.control-grid textarea { min-height:70px; }
 .check { display:flex !important; align-items:center; gap:7px; color:#b9b9c1; font-size:12px; }.check input { width:auto; }
+.motion-editor { margin:4px 0 14px; border:1px solid #34343d; border-radius:12px; padding:12px; background:#101014; }
+.motion-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+.motion-heading strong { display:block; font-size:13px; }
+.motion-heading small { display:block; margin-top:3px; color:#858591; font-size:11px; line-height:1.35; }
+.motion-heading button { padding:8px 10px; font-size:12px; }
+.keyframe-list { display:grid; gap:8px; }
+.keyframe-row { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) auto; gap:8px; align-items:end; border-top:1px solid #292932; padding-top:8px; }
+.keyframe-row:first-child { border-top:0; padding-top:0; }
+.keyframe-row label { display:grid; gap:5px; color:#aaaab4; font-size:11px; }
+.keyframe-row button { white-space:nowrap; }
 .hidden { display:none !important; }
-@media (max-width:980px) { .workspace { grid-template-columns:1fr; }.chat-card { position:static; min-height:480px; max-height:none; }.control-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media (max-width:620px) { .shell { padding:18px 12px 40px; }.upload-panel { padding:26px 16px; }.control-grid { grid-template-columns:1fr; }.toolbar,.section-heading { align-items:flex-start; flex-direction:column; } }
+@media (max-width:980px) { .workspace { grid-template-columns:1fr; }.chat-card { position:static; min-height:480px; max-height:none; }.control-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.keyframe-row { grid-template-columns:repeat(2,minmax(0,1fr)); }.keyframe-row button { grid-column:1/-1; } }
+@media (max-width:620px) { .shell { padding:18px 12px 40px; }.upload-panel { padding:26px 16px; }.control-grid { grid-template-columns:1fr; }.toolbar,.section-heading,.motion-heading { align-items:flex-start; flex-direction:column; }.keyframe-row { grid-template-columns:1fr; } }
