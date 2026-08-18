@@ -8,21 +8,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class ApiClient(private val context: Context) {
-    private val base: String get() {
-        val saved = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-            .getString("server", null)
-            ?.trim()
-            ?.trimEnd('/')
-        return if (
-            saved.isNullOrBlank() ||
-            saved == "http://10.0.2.2:8000" ||
-            saved == "http://localhost:8000"
-        ) {
-            "https://ai-generator-for-video-git-279005246322.europe-west2.run.app"
-        } else {
-            saved
-        }
-    }
+    private val base: String
+        get() = normalizeServer(
+            context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+                .getString("server", null)
+        )
 
     fun absolute(path: String): String = if (path.startsWith("http")) path else base + path
 
@@ -69,5 +59,24 @@ class ApiClient(private val context: Context) {
         val text = (if (code in 200..299) conn.inputStream else conn.errorStream).bufferedReader().use { it.readText() }
         if (code !in 200..299) throw IllegalStateException(runCatching { JSONObject(text).optString("detail") }.getOrDefault("Upload failed ($code)"))
         return JSONObject(text)
+    }
+
+    companion object {
+        const val DEFAULT_SERVER = "https://ai-generator-for-video-git-279005246322.europe-west2.run.app"
+
+        fun normalizeServer(value: String?): String {
+            val saved = value?.trim()?.trimEnd('/')
+            if (saved.isNullOrBlank()) return DEFAULT_SERVER
+            val lower = saved.lowercase()
+            if (
+                lower.startsWith("http://localhost") ||
+                lower.startsWith("https://localhost") ||
+                lower.startsWith("http://127.0.0.1") ||
+                lower.startsWith("https://127.0.0.1") ||
+                lower.startsWith("http://10.0.2.2") ||
+                lower.startsWith("https://10.0.2.2")
+            ) return DEFAULT_SERVER
+            return saved
+        }
     }
 }
