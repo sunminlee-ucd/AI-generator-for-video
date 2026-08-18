@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import GEMINI_API_KEY, GEMINI_MODEL, MAX_UPLOAD_MB, PROJECTS_DIR
 from app.schemas import ApplyPlanRequest, CommandRequest, EditPlan, ReplaceOperationsRequest
-from app.services.ffmpeg_engine import FFmpegEngine
+from app.services.render_optimizer import OptimizedFFmpegEngine
 from app.services.gemini_planner import GeminiPlanner
 from app.services.project_store import ProjectStore
 from app.services.wan_engine import WanEngine
@@ -22,7 +22,7 @@ app = FastAPI(title="AI Video Editor", version="0.4.0")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 store = ProjectStore()
-ffmpeg = FFmpegEngine()
+ffmpeg = OptimizedFFmpegEngine()
 executor = ThreadPoolExecutor(max_workers=2)
 jobs: dict[str, dict] = {}
 jobs_lock = Lock()
