@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from app.schemas import EditOperation
+from app.schemas import EditOperation, MotionKeyframe
 from app.services.ffmpeg_engine import FFmpegEngine
 
 
@@ -36,7 +36,7 @@ def test_probe_and_render_trim_speed(tmp_path):
     assert 0.8 <= rendered["duration_seconds"] <= 1.2
 
 
-def test_masked_video_with_background_and_music(tmp_path):
+def test_masked_video_with_background_music_and_motion(tmp_path):
     source = tmp_path / "source.mp4"
     background = tmp_path / "background.mp4"
     music = tmp_path / "music.wav"
@@ -58,8 +58,17 @@ def test_masked_video_with_background_and_music(tmp_path):
     }
     operations = [
         EditOperation(
-            type="masked_video", secondary_asset_id="bg", shape="star",
-            x=80, y=40, width=160, height=160, feather=2,
+            type="masked_video",
+            secondary_asset_id="bg",
+            shape="star",
+            width=120,
+            height=120,
+            feather=2,
+            motion_keyframes=[
+                MotionKeyframe(time_seconds=0, x=-60, y=20, easing="ease_in_out"),
+                MotionKeyframe(time_seconds=1, x=100, y=60, easing="ease_out"),
+                MotionKeyframe(time_seconds=2, x=250, y=90, easing="linear"),
+            ],
         ),
         EditOperation(type="text_overlay", text="Hello", font_family="DejaVu Sans", font_size=24),
         EditOperation(
