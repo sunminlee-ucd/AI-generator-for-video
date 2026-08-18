@@ -203,11 +203,13 @@ class FFmpegEngine:
         meta = self.probe(source)
         width = op.width or 360
         height = op.height or 202
-        x = op.x or 20
-        y = op.y or 20
+        default_x = op.x if op.x is not None else 20
+        default_y = op.y if op.y is not None else 20
+        x_expr, y_expr = self._motion_coordinates(op, default_x, default_y)
+        enable = self._timeline_enable(op, float(meta["duration_seconds"]))
         fc = (
             f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}[pip];"
-            f"[0:v][pip]overlay={x}:{y}:shortest=1[v]"
+            f"[0:v][pip]overlay=x='{x_expr}':y='{y_expr}':eval=frame:shortest=1{enable}[v]"
         )
         cmd = [FFMPEG_BIN, "-y", "-i", str(source), "-i", str(second), "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-shortest"]
         cmd += self._encoding_args(meta["has_audio"])
@@ -220,8 +222,10 @@ class FFmpegEngine:
         canvas_h = int(meta["dimensions"]["height"] or 720)
         mask_w = min(op.width or 360, canvas_w)
         mask_h = min(op.height or 360, canvas_h)
-        x = min(op.x or 40, max(0, canvas_w - mask_w))
-        y = min(op.y or 40, max(0, canvas_h - mask_h))
+        default_x = op.x if op.x is not None else 40
+        default_y = op.y if op.y is not None else 40
+        x_expr, y_expr = self._motion_coordinates(op, default_x, default_y)
+        enable = self._timeline_enable(op, float(meta["duration_seconds"]))
         mask = temp_dir / f"mask_{op.id}.png"
         self._create_mask(mask, op.shape or "star", mask_w, mask_h, op.rotation or 0, op.feather or 0, op.opacity or 1.0)
         fc = (
@@ -229,7 +233,7 @@ class FFmpegEngine:
             f"[0:v]scale={mask_w}:{mask_h}:force_original_aspect_ratio=increase,crop={mask_w}:{mask_h},format=rgba[fg];"
             "[2:v]format=gray[mask];"
             "[fg][mask]alphamerge[cut];"
-            f"[bg][cut]overlay={x}:{y}:shortest=1[v]"
+            f"[bg][cut]overlay=x='{x_expr}':y='{y_expr}':eval=frame:shortest=1{enable}[v]"
         )
         cmd = [
             FFMPEG_BIN, "-y", "-i", str(foreground), "-i", str(background), "-loop", "1", "-i", str(mask),
@@ -271,6 +275,59 @@ class FFmpegEngine:
         cmd += self._encoding_args(True)
         cmd += [str(output)]
         _run(cmd)
+
+    @classmethod
+    def _motion_coordinates(cls, op: EditOperation, default_x: int, default_y: int) -> tuple[str, str]:
+        frames = op.motion_keyframes
+        if not frames:
+            return str(default_x), str(default_y)
+        return cls._keyframe_expression(frames, "x", default_x), cls._keyframe_expression(frames, "y", default_y)
+
+    @classmethod
+    def _keyframe_expression(cls, frames, field: str, default: int) -> str:
+        if not frames:
+            return str(default)
+        if len(frames) == 1:
+            return f"{float(getattr(frames[0], field)):.6f}"
+
+        parts: list[tuple[float, str]] = []
+        for current, following in zip(frames, frames[1:]):
+            t0 = float(current.time_seconds)
+            t1 = float(following.time_seconds)
+            v0 = float(getattr(current, field))
+            v1 = float(getattr(following, field))
+            duration = max(0.000001, t1 - t0)
+            progress = f"((t-{t0:.6f})/{duration:.6f})"
+            eased = cls._easing_expression(progress, current.easing)
+            segment = f"({v0:.6f}+({v1 - v0:.6f})*({eased}))"
+            parts.append((t1, segment))
+
+        expression = f"{float(getattr(frames[-1], field)):.6f}"
+        for end_time, segment in reversed(parts):
+            expression = f"if(lt(t,{end_time:.6f}),{segment},{expression})"
+        first_time = float(frames[0].time_seconds)
+        first_value = float(getattr(frames[0], field))
+        if first_time > 0:
+            expression = f"if(lt(t,{first_time:.6f}),{first_value:.6f},{expression})"
+        return expression
+
+    @staticmethod
+    def _easing_expression(progress: str, easing: str) -> str:
+        if easing == "ease_in":
+            return f"({progress})*({progress})"
+        if easing == "ease_out":
+            return f"(1-(1-({progress}))*(1-({progress})))"
+        if easing == "ease_in_out":
+            return f"(({progress})*({progress})*(3-2*({progress})))"
+        return progress
+
+    @staticmethod
+    def _timeline_enable(op: EditOperation, duration: float) -> str:
+        if op.start_seconds is None and op.end_seconds is None:
+            return ""
+        start = op.start_seconds or 0.0
+        end = op.end_seconds if op.end_seconds is not None else duration
+        return f":enable='between(t,{start:.6f},{end:.6f})'"
 
     def extract_frame(self, source: Path, output: Path, at_seconds: float = 0.0) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
