@@ -305,21 +305,33 @@ class FFmpegEngine:
         _run(cmd)
 
     @staticmethod
-    def _visual_input(asset: dict) -> list[str]:
+    def _visual_kind(asset: dict) -> str:
+        kind = asset.get("kind")
+        if kind in {"video", "image"}:
+            return kind
+        path = Path(asset.get("path", ""))
+        if path.suffix.lower() in IMAGE_EXTENSIONS:
+            return "image"
+        if path.exists():
+            return "video"
+        raise FFmpegError("Visual media asset is missing or unsupported")
+
+    @classmethod
+    def _visual_input(cls, asset: dict) -> list[str]:
         path = str(asset["path"])
-        if asset.get("kind") == "image":
+        if cls._visual_kind(asset) == "image":
             return ["-loop", "1", "-i", path]
         return ["-stream_loop", "-1", "-i", path]
 
-    @staticmethod
-    def _asset(asset_id: str | None, assets: dict[str, dict]) -> dict:
+    @classmethod
+    def _asset(cls, asset_id: str | None, assets: dict[str, dict]) -> dict:
         if not asset_id or asset_id not in assets:
             raise FFmpegError(f"Missing media asset: {asset_id}")
         asset = assets[asset_id]
-        if asset.get("kind") not in {"video", "image"}:
-            raise FFmpegError(f"Asset is not visual media: {asset_id}")
-        if not Path(asset["path"]).exists():
+        path = Path(asset["path"])
+        if not path.exists():
             raise FFmpegError(f"Media asset file is missing: {asset_id}")
+        cls._visual_kind(asset)
         return asset
 
     @staticmethod
