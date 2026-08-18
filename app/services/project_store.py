@@ -97,6 +97,30 @@ class ProjectStore:
     def asset_map(data: dict) -> dict[str, dict]:
         return {asset["id"]: asset for asset in data.get("assets", [])}
 
+    @staticmethod
+    def public_asset(project_id: str, asset: dict) -> dict:
+        return {
+            "id": asset["id"],
+            "filename": asset["filename"],
+            "kind": asset["kind"],
+            "metadata": asset.get("metadata", {}),
+            "url": f"/api/projects/{project_id}/assets/{asset['id']}",
+        }
+
+    @classmethod
+    def public_project(cls, project: dict) -> dict:
+        project_id = project["id"]
+        return {
+            "id": project_id,
+            "filename": project["filename"],
+            "source_kind": project.get("source_kind", "video"),
+            "metadata": project.get("metadata", {}),
+            "operations": project.get("operations", []),
+            "assets": [cls.public_asset(project_id, asset) for asset in project.get("assets", [])],
+            "source_url": f"/api/projects/{project_id}/media/source",
+            "preview_url": f"/api/projects/{project_id}/media/preview" if project.get("preview_path") else None,
+        }
+
     def _write(self, project_id: str, data: dict) -> None:
         path = PROJECTS_DIR / project_id / "project.json"
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
