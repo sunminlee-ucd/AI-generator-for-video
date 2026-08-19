@@ -22,6 +22,7 @@ Supported operations:
 - masked_media: place an uploaded image or video (source_asset_id) inside a circle/star/heart/triangle over the current canvas. Motion is supported.
 - music: add an uploaded/licensed audio asset using source_asset_id. You may set volume, fade_in_seconds, fade_out_seconds, loop, and ducking.
 - style_transfer: generative visual restyling. Put a detailed visual prompt in style_prompt.
+- photo_turn_3d: create a short 3D-like product/object turntable clip. The project source must be the front photo. Use secondary_asset_id for the side photo and tertiary_asset_id for the back photo. Set turn_duration_seconds between 2 and 8, turn_direction to left/right, and normally keep remove_background=true so the subject is isolated before the turn animation.
 
 Motion keyframes:
 - motion_keyframes may be used with masked_video, masked_media, picture_in_picture, or media_overlay.
@@ -43,6 +44,7 @@ Rules:
 9. If the user's request is achievable with the supported operations, return at least one operation. Do not return an empty operation list just because the request is phrased casually or in a language other than English.
 10. When exactly one uploaded visual asset exists and the user says to combine/use/edit the two videos together without specifying a layout, choose concat for sequential joining. If they explicitly say side by side, split screen, top/bottom, 동시에, 나란히, or 화면을 나눠서, choose split_screen instead.
 11. When choosing concat/split_screen/picture_in_picture, set secondary_asset_id to the relevant uploaded visual asset ID. When choosing media_overlay/masked_media, set source_asset_id.
+12. For requests such as 3D spin, product rotation, 앞/옆/뒤 사진으로 돌려줘, or make these front/side/back photos rotate, use photo_turn_3d only when the source is an image and at least two additional image assets are available. Prefer the first suitable image as side and the next suitable image as back, and keep remove_background=true unless the user explicitly asks to preserve the original backgrounds.
 """
 
 EMPTY_PLAN_RETRY = """
