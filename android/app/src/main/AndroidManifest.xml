@@ -6,6 +6,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:label="AI Editor"
         android:usesCleartextTraffic="true">
+        <activity android:name=".PhotoTurnActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".EnhancedMainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
