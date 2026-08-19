@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0f">
+  <title>AI Video Editor</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-bar">
+      <div class="brand-block">
+        <p class="eyebrow">AI video editor</p>
+        <h1>Edit by talking</h1>
+      </div>
+      <span id="status" class="status-pill" aria-live="polite">Ready</span>
+    </header>
+
+    <section id="upload-panel" class="start-card" aria-labelledby="start-title">
+      <div class="start-copy">
+        <span class="step-badge">1</span>
+        <div>
+          <h2 id="start-title">Choose a video</h2>
+          <p>Start with one video. You can add another video or music later.</p>
+        </div>
+      </div>
+      <label class="upload-dropzone" for="video-file">
+        <strong>Tap to choose a video</strong>
+        <span>MP4, MOV and other common video formats</span>
+        <input id="video-file" type="file" accept="video/*">
+      </label>
+      <button id="upload-button" class="primary-button" type="button" disabled>Continue</button>
+    </section>
+
+    <section id="workspace" class="workspace hidden">
+      <section class="stage-card" aria-label="Video preview">
+        <div id="preview-stage" class="preview-stage">
+          <video id="preview" controls playsinline preload="metadata"></video>
+          <div id="direct-layer" class="direct-layer hidden" aria-label="Selected layer. Drag to move and use the corner handle to resize." role="application">
+            <span id="direct-layer-label" class="direct-layer-label">Drag to move</span>
+            <button id="resize-handle" class="resize-handle" type="button" aria-label="Resize selected layer"></button>
+          </div>
+        </div>
+        <div class="stage-meta">
+          <div>
+            <strong id="project-name">Video</strong>
+            <span id="metadata"></span>
+          </div>
+          <button id="undo-button" class="text-button" type="button">Undo</button>
+        </div>
+        <div id="selection-hint" class="selection-hint hidden">Drag the selected layer directly on the video. Use the corner handle to resize it.</div>
+      </section>
+
+      <section class="mobile-panel" data-panel="ai">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 2</p>
+            <h2>Tell AI what to change</h2>
+          </div>
+        </div>
+
+        <div id="quick-prompts" class="quick-prompts" aria-label="Example edit requests">
+          <button type="button" data-prompt="Cut the unnecessary beginning and ending.">Trim the video</button>
+          <button type="button" data-prompt="Add a clean title near the bottom.">Add text</button>
+          <button type="button" data-prompt="Put the main video inside a star and use my extra video as the background.">Star over background</button>
+          <button type="button" data-prompt="Add my music quietly and lower it while someone is speaking.">Add background music</button>
+        </div>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="chat-form" class="composer">
+          <label class="sr-only" for="prompt">Describe the video edit</label>
+          <textarea id="prompt" rows="2" placeholder="Example: Put me in a star and move it slowly to the right"></textarea>
+          <button type="submit" class="primary-button">Ask AI</button>
+        </form>
+      </section>
+
+      <section class="mobile-panel hidden" data-panel="edits">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 3</p>
+            <h2>Review and adjust</h2>
+          </div>
+          <span id="edit-count" class="count-badge">0</span>
+        </div>
+        <div id="proposal-note" class="proposal-note hidden"></div>
+        <div id="operations" class="operations"></div>
+        <div class="desktop-render-row">
+          <button id="desktop-apply" class="primary-button hidden" type="button">Apply AI changes</button>
+          <button id="save-operations" class="secondary-button" type="button">Render my changes</button>
+        </div>
+      </section>
+
+      <section class="mobile-panel hidden" data-panel="media">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Optional</p>
+            <h2>Add video or music</h2>
+          </div>
+        </div>
+        <p class="panel-copy">Add a background video, overlay clip, or music track. AI will use the file names when you describe your edit.</p>
+        <label class="media-add-button" for="asset-file">
+          <strong>Add video or music</strong>
+          <span>Choose from your phone</span>
+          <input id="asset-file" type="file" accept="video/*,audio/*">
+        </label>
+        <div id="assets" class="assets-list"></div>
+        <p class="fine-print">Only use music you have permission to use. CC0 and properly attributed CC BY tracks are suitable choices.</p>
+      </section>
+    </section>
+  </main>
+
+  <nav id="bottom-nav" class="bottom-nav hidden" aria-label="Editor sections">
+    <button type="button" class="nav-item active" data-tab="ai" aria-current="page"><span>AI</span><small>Ask</small></button>
+    <button type="button" class="nav-item" data-tab="edits"><span>Edits</span><small>Adjust</small></button>
+    <button type="button" class="nav-item" data-tab="media"><span>Media</span><small>Add</small></button>
+  </nav>
+
+  <div id="bottom-action" class="bottom-action hidden">
+    <button id="apply-proposal" class="primary-button hidden" type="button">Apply AI changes</button>
+    <button id="mobile-save" class="primary-button hidden" type="button">Render my changes</button>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

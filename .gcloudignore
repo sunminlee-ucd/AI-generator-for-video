@@ -1,0 +1,15 @@
+.git/
+.github/
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+.env
+.env.*
+data/
+android/
+ios/
+tests/
+deploy/
+README.md
+.DS_Store
