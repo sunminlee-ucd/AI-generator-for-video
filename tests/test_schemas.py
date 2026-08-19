@@ -27,6 +27,16 @@ def test_music_requires_audio_asset():
         EditOperation(type="music", volume=0.25)
 
 
+def test_concat_requires_second_media_asset():
+    with pytest.raises(ValidationError):
+        EditOperation(type="concat")
+
+
+def test_trim_end_must_be_after_start():
+    with pytest.raises(ValidationError):
+        EditOperation(type="trim", start_seconds=8, end_seconds=3)
+
+
 def test_motion_keyframes_are_sorted_and_allow_offscreen_positions():
     operation = EditOperation(
         type="masked_video",
