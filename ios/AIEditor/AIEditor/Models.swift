@@ -43,6 +43,7 @@ struct EditOperation: Codable, Identifiable {
     var endSeconds: Double?
     var sourceAssetId: String?
     var secondaryAssetId: String?
+    var tertiaryAssetId: String?
     var speed: Double?
     var volume: Double?
     var text: String?
@@ -69,6 +70,9 @@ struct EditOperation: Codable, Identifiable {
     var loop: Bool?
     var ducking: Bool?
     var stylePrompt: String?
+    var turnDurationSeconds: Double?
+    var turnDirection: String?
+    var removeBackground: Bool?
 
     init(
         id: String = UUID().uuidString.replacingOccurrences(of: "-", with: ""),
@@ -78,6 +82,7 @@ struct EditOperation: Codable, Identifiable {
         endSeconds: Double? = nil,
         sourceAssetId: String? = nil,
         secondaryAssetId: String? = nil,
+        tertiaryAssetId: String? = nil,
         speed: Double? = nil,
         volume: Double? = nil,
         text: String? = nil,
@@ -103,7 +108,10 @@ struct EditOperation: Codable, Identifiable {
         fadeOutSeconds: Double? = 0,
         loop: Bool? = true,
         ducking: Bool? = false,
-        stylePrompt: String? = nil
+        stylePrompt: String? = nil,
+        turnDurationSeconds: Double? = 4,
+        turnDirection: String? = "left",
+        removeBackground: Bool? = true
     ) {
         self.id = id
         self.type = type
@@ -112,6 +120,7 @@ struct EditOperation: Codable, Identifiable {
         self.endSeconds = endSeconds
         self.sourceAssetId = sourceAssetId
         self.secondaryAssetId = secondaryAssetId
+        self.tertiaryAssetId = tertiaryAssetId
         self.speed = speed
         self.volume = volume
         self.text = text
@@ -138,14 +147,18 @@ struct EditOperation: Codable, Identifiable {
         self.loop = loop
         self.ducking = ducking
         self.stylePrompt = stylePrompt
+        self.turnDurationSeconds = turnDurationSeconds
+        self.turnDirection = turnDirection
+        self.removeBackground = removeBackground
     }
 
     enum CodingKeys: String, CodingKey {
         case id, type, enabled, speed, volume, text, position, bold, layout, ratio, shape, x, y, width, height, rotation, opacity, feather, fit, loop, ducking
         case startSeconds = "start_seconds", endSeconds = "end_seconds"
-        case sourceAssetId = "source_asset_id", secondaryAssetId = "secondary_asset_id"
+        case sourceAssetId = "source_asset_id", secondaryAssetId = "secondary_asset_id", tertiaryAssetId = "tertiary_asset_id"
         case fontFamily = "font_family", fontSize = "font_size", fontColor = "font_color", textBackgroundColor = "text_background_color"
         case motionKeyframes = "motion_keyframes", fadeInSeconds = "fade_in_seconds", fadeOutSeconds = "fade_out_seconds", stylePrompt = "style_prompt"
+        case turnDurationSeconds = "turn_duration_seconds", turnDirection = "turn_direction", removeBackground = "remove_background"
     }
 
     var displayTitle: String {
@@ -162,6 +175,7 @@ struct EditOperation: Codable, Identifiable {
         case "mute": return "Mute"
         case "volume": return "Volume"
         case "style_transfer": return "Visual style"
+        case "photo_turn_3d": return "Photo 3D Turn"
         default: return "Edit"
         }
     }
