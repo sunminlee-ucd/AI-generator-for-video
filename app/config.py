@@ -12,6 +12,13 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.getenv("FFPROBE_BIN", "ffprobe")
 
+# Mobile previews favour responsiveness over archival quality. Final export can later use a
+# separate high-quality profile while previews stay fast enough for repeated adjustments.
+PREVIEW_MAX_DIMENSION = max(360, int(os.getenv("PREVIEW_MAX_DIMENSION", "1280")))
+PREVIEW_CRF = min(40, max(18, int(os.getenv("PREVIEW_CRF", "28"))))
+PREVIEW_PRESET = os.getenv("PREVIEW_PRESET", "ultrafast").strip() or "ultrafast"
+PREVIEW_AUDIO_BITRATE = os.getenv("PREVIEW_AUDIO_BITRATE", "96k").strip() or "96k"
+
 WAN_REPO_PATH = os.getenv("WAN_REPO_PATH", "")
 WAN_CKPT_DIR = os.getenv("WAN_CKPT_DIR", "")
 WAN_PYTHON_BIN = os.getenv("WAN_PYTHON_BIN", "python")
