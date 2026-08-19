@@ -26,11 +26,7 @@ private object UiBusyState {
     fun current(): String? = currentLabel
 }
 
-/**
- * Same-package replacement for the programmatically-created android.widget.Button instances
- * in MainActivity. It keeps the existing API while adding clear press feedback and a loading
- * state without requiring every individual button call site to manage animations itself.
- */
+/** Adds clear press feedback and a shared loading state to programmatic editor buttons. */
 class Button(context: Context) : android.widget.Button(context) {
     private var baseLabel = ""
     private var changingInternally = false
@@ -45,16 +41,16 @@ class Button(context: Context) : android.widget.Button(context) {
             if (!isEnabled) return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> animate()
-                    .scaleX(0.97f)
-                    .scaleY(0.97f)
-                    .alpha(0.76f)
-                    .setDuration(70)
+                    .scaleX(0.96f)
+                    .scaleY(0.96f)
+                    .alpha(0.74f)
+                    .setDuration(65)
                     .start()
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> animate()
                     .scaleX(1f)
                     .scaleY(1f)
                     .alpha(1f)
-                    .setDuration(110)
+                    .setDuration(115)
                     .start()
             }
             false
@@ -91,7 +87,7 @@ class Button(context: Context) : android.widget.Button(context) {
             } else {
                 setCompoundDrawables(null, null, null, null)
                 super.setText(baseLabel)
-                alpha = 0.55f
+                alpha = 0.52f
             }
         }
         changingInternally = false
@@ -101,7 +97,11 @@ class Button(context: Context) : android.widget.Button(context) {
         "AI is planning" -> if (label == "Ask AI") "AI is planning…" else null
         "Rendering" -> if (label == "Apply AI changes" || label == "Render my changes") "Rendering… Please wait" else null
         "Uploading" -> if (label == "Choose photo or video") "Uploading… Please wait" else null
-        "Adding media" -> if (label == "Add photo or video") "Adding media…" else null
+        "Adding media" -> when (label) {
+            "Add photo or video" -> "Adding media…"
+            "Add background music" -> "Adding music…"
+            else -> null
+        }
         "Adding music" -> if (label == "Add background music") "Adding music…" else null
         else -> null
     }
@@ -117,10 +117,7 @@ class Button(context: Context) : android.widget.Button(context) {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
 
-/**
- * MainActivity creates TextView directly for its status banner. By observing the known async
- * status values here, all action buttons can immediately reflect the same busy state.
- */
+/** Mirrors async status values into the banner and shared button busy state. */
 class TextView(context: Context) : android.widget.TextView(context) {
     override fun setText(text: CharSequence?, type: BufferType?) {
         val raw = text?.toString().orEmpty()
@@ -135,7 +132,7 @@ class TextView(context: Context) : android.widget.TextView(context) {
         super.setText(display, type)
         when (raw) {
             "AI is planning", "Rendering", "Uploading", "Adding media", "Adding music" -> UiBusyState.update(raw)
-            "Ready", "Failed" -> UiBusyState.update(null)
+            "Ready", "Failed", "Edit added", "Edit removed" -> UiBusyState.update(null)
         }
     }
 }
