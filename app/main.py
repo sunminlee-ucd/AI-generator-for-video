@@ -14,10 +14,11 @@ from app.config import GEMINI_API_KEY, GEMINI_MODEL, MAX_UPLOAD_MB, PROJECTS_DIR
 from app.schemas import ApplyPlanRequest, CommandRequest, EditPlan, EditOperation, ReplaceOperationsRequest
 from app.services.render_optimizer import OptimizedFFmpegEngine
 from app.services.gemini_planner import GeminiPlanner
+from app.services.photo_turn import PhotoTurnRenderer
 from app.services.project_store import ProjectStore
 from app.services.wan_engine import WanEngine
 
-app = FastAPI(title="AI Video Editor", version="0.5.0")
+app = FastAPI(title="AI Video Editor", version="0.6.0")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 store = ProjectStore()
@@ -39,6 +40,7 @@ def health():
         "media_kinds": ["video", "image", "audio"],
         "native_clients": ["ios", "android"],
         "manual_editing": True,
+        "photo_turn_3d": True,
         "ai": {
             "provider": "gemini",
             "configured": bool(GEMINI_API_KEY),
@@ -217,6 +219,12 @@ def _validate_operations_for_project(project: dict, operations: list[EditOperati
     duration = float(project.get("metadata", {}).get("duration_seconds") or 0.0)
     assets = {asset["id"]: asset for asset in project.get("assets", [])}
 
+    turn_ops = [op for op in operations if op.enabled and op.type == "photo_turn_3d"]
+    if len(turn_ops) > 1:
+        raise ValueError("Use only one Photo 3D Turn operation per project")
+    if turn_ops:
+        duration = float(turn_ops[-1].turn_duration_seconds or duration or 4.0)
+
     def require_asset(asset_id: str | None, kinds: set[str], label: str) -> None:
         if not asset_id or asset_id not in assets:
             raise ValueError(f"{label} requires an uploaded media asset")
@@ -228,7 +236,14 @@ def _validate_operations_for_project(project: dict, operations: list[EditOperati
     for operation in operations:
         if not operation.enabled:
             continue
-        if operation.type == "trim":
+        if operation.type == "photo_turn_3d":
+            if project.get("source_kind") != "image":
+                raise ValueError("Photo 3D Turn requires the project source to be the front photo")
+            require_asset(operation.secondary_asset_id, {"image"}, "Photo 3D Turn side view")
+            require_asset(operation.tertiary_asset_id, {"image"}, "Photo 3D Turn back view")
+            if operation.secondary_asset_id == operation.tertiary_asset_id:
+                raise ValueError("Photo 3D Turn needs different side and back photos")
+        elif operation.type == "trim":
             start = operation.start_seconds or 0.0
             end = operation.end_seconds if operation.end_seconds is not None else duration
             if end <= start:
@@ -301,19 +316,52 @@ def _render_job(job_id: str, project_id: str) -> None:
         operations = store.operations(project)
         assets = store.asset_map(project)
         project_dir = PROJECTS_DIR / project_id
-        standard_ops = [op for op in operations if op.type != "style_transfer"]
+
+        photo_turn_ops = [op for op in operations if op.enabled and op.type == "photo_turn_3d"]
+        standard_ops = [op for op in operations if op.type not in {"style_transfer", "photo_turn_3d"}]
         style_ops = [op for op in operations if op.enabled and op.type == "style_transfer"]
+
+        render_source = source
+        render_source_kind = project.get("source_kind", "video")
+        render_duration = float(project.get("metadata", {}).get("duration_seconds") or 5.0)
+
+        if photo_turn_ops:
+            turn = photo_turn_ops[-1]
+            side = assets[turn.secondary_asset_id]
+            back = assets[turn.tertiary_asset_id]
+            dims = project.get("metadata", {}).get("dimensions", {})
+            render_duration = float(turn.turn_duration_seconds or 4.0)
+            render_source = project_dir / "photo_turn_work.mp4"
+            PhotoTurnRenderer().render(
+                source,
+                Path(side["path"]),
+                Path(back["path"]),
+                render_source,
+                width=int(dims.get("width") or 1280),
+                height=int(dims.get("height") or 720),
+                duration_seconds=render_duration,
+                direction=turn.turn_direction or "left",
+            )
+            render_source_kind = "video"
+
+            if not standard_ops and not style_ops:
+                final = project_dir / "preview.mp4"
+                if render_source != final:
+                    render_source.replace(final)
+                store.set_preview(project_id, final)
+                _update_job(job_id, status="completed", output_url=f"/api/projects/{project_id}/media/preview")
+                return
 
         # Without a generative style stage the FFmpeg preview is already the final preview, so
         # render directly to it and avoid copying the complete video once more.
         base_preview = project_dir / ("preview_style_base.mp4" if style_ops else "preview.mp4")
         ffmpeg.render(
-            source,
+            render_source,
             standard_ops,
             base_preview,
             assets,
-            source_kind=project.get("source_kind", "video"),
-            source_duration=float(project.get("metadata", {}).get("duration_seconds") or 5.0),
+            source_kind=render_source_kind,
+            source_duration=render_duration,
         )
         if style_ops:
             final = project_dir / "preview_wan.mp4"
