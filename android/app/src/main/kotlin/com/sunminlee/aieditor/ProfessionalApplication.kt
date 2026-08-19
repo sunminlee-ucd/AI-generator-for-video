@@ -29,8 +29,8 @@ class ProfessionalApplication : Application(), Application.ActivityLifecycleCall
     }
 
     override fun onActivityCreated(activity: Activity, state: Bundle?) {
-        activity.window.statusBarColor = Color.rgb(14, 16, 20)
-        activity.window.navigationBarColor = Color.rgb(14, 16, 20)
+        activity.window.statusBarColor = Color.rgb(11, 11, 16)
+        activity.window.navigationBarColor = Color.rgb(11, 11, 16)
     }
 
     override fun onActivityResumed(activity: Activity) {
@@ -89,16 +89,15 @@ class ProfessionalApplication : Application(), Application.ActivityLifecycleCall
                     includeFontPadding = false
                     minHeight = 0
                     minimumHeight = 0
-                    setTextColor(Color.rgb(25, 79, 42))
+                    setTextColor(if (selected) Color.WHITE else Color.rgb(183, 184, 201))
                     setPadding(dp(7), dp(4), dp(7), dp(4))
-                    // These legacy colors are intentional markers; ProfessionalEditorSkin
-                    // immediately converts them into selected/idle dark workspace tiles.
+                    // Marker colours are read once by ProfessionalEditorSkin before it
+                    // replaces these with the final premium workspace tile styling.
                     background = rounded(
-                        if (selected) Color.rgb(205, 232, 204)
-                        else if (index % 2 == 0) Color.rgb(226, 244, 224)
-                        else Color.rgb(255, 244, 190),
+                        if (selected) Color.rgb(66, 43, 111)
+                        else Color.rgb(27, 27, 38),
                         14f,
-                        if (selected) Color.rgb(47, 125, 50) else Color.rgb(249, 199, 79),
+                        if (selected) Color.rgb(167, 139, 250) else Color.rgb(42, 42, 56),
                         if (selected) 2 else 1,
                     )
                     setOnClickListener { headers[index].performClick() }
@@ -153,15 +152,15 @@ class ProfessionalApplication : Application(), Application.ActivityLifecycleCall
             textSize = 12.5f
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             includeFontPadding = false
-            setTextColor(Color.rgb(25, 79, 42))
+            setTextColor(Color.WHITE)
             setPadding(dp(10), dp(5), dp(10), dp(5))
-            background = rounded(Color.rgb(255, 244, 190), 14f, Color.rgb(249, 199, 79), 1)
+            background = rounded(Color.rgb(37, 27, 58), 14f, Color.rgb(101, 70, 156), 1)
             setOnClickListener {
                 container.context.startActivity(Intent(container.context, PhotoTurnActivity::class.java))
             }
         }
         row.addView(button, LinearLayout.LayoutParams(0, dp(62), 1f).apply { marginEnd = dp(4) })
-        row.addView(View(container.context), LinearLayout.LayoutParams(0, dp(62), 1f).apply { marginStart = dp(4) })
+        row.addView(View(container.context).apply { setBackgroundColor(Color.TRANSPARENT) }, LinearLayout.LayoutParams(0, dp(62), 1f).apply { marginStart = dp(4) })
         container.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
         container.tag = "photo-turn-injected"
     }
