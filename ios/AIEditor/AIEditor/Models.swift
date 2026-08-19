@@ -70,6 +70,76 @@ struct EditOperation: Codable, Identifiable {
     var ducking: Bool?
     var stylePrompt: String?
 
+    init(
+        id: String = UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+        type: String,
+        enabled: Bool = true,
+        startSeconds: Double? = nil,
+        endSeconds: Double? = nil,
+        sourceAssetId: String? = nil,
+        secondaryAssetId: String? = nil,
+        speed: Double? = nil,
+        volume: Double? = nil,
+        text: String? = nil,
+        position: String? = nil,
+        fontFamily: String? = "DejaVu Sans",
+        fontSize: Int? = 48,
+        fontColor: String? = "white",
+        textBackgroundColor: String? = "black@0.45",
+        bold: Bool? = false,
+        layout: String? = nil,
+        ratio: Double? = 0.5,
+        shape: String? = nil,
+        x: Int? = 40,
+        y: Int? = 40,
+        width: Int? = 360,
+        height: Int? = 360,
+        rotation: Double? = 0,
+        opacity: Double? = 1,
+        feather: Int? = 0,
+        fit: String? = nil,
+        motionKeyframes: [MotionKeyframe]? = [],
+        fadeInSeconds: Double? = 0,
+        fadeOutSeconds: Double? = 0,
+        loop: Bool? = true,
+        ducking: Bool? = false,
+        stylePrompt: String? = nil
+    ) {
+        self.id = id
+        self.type = type
+        self.enabled = enabled
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.sourceAssetId = sourceAssetId
+        self.secondaryAssetId = secondaryAssetId
+        self.speed = speed
+        self.volume = volume
+        self.text = text
+        self.position = position
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+        self.fontColor = fontColor
+        self.textBackgroundColor = textBackgroundColor
+        self.bold = bold
+        self.layout = layout
+        self.ratio = ratio
+        self.shape = shape
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.rotation = rotation
+        self.opacity = opacity
+        self.feather = feather
+        self.fit = fit
+        self.motionKeyframes = motionKeyframes
+        self.fadeInSeconds = fadeInSeconds
+        self.fadeOutSeconds = fadeOutSeconds
+        self.loop = loop
+        self.ducking = ducking
+        self.stylePrompt = stylePrompt
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, type, enabled, speed, volume, text, position, bold, layout, ratio, shape, x, y, width, height, rotation, opacity, feather, fit, loop, ducking
         case startSeconds = "start_seconds", endSeconds = "end_seconds"
@@ -83,13 +153,16 @@ struct EditOperation: Codable, Identifiable {
         case "trim": return "Trim"
         case "text_overlay": return "Text"
         case "split_screen": return "Split screen"
-        case "picture_in_picture", "media_overlay": return "Media layer"
+        case "picture_in_picture": return "Picture in picture"
+        case "media_overlay": return "Media layer"
         case "masked_video", "masked_media": return "Shape layer"
+        case "concat": return "Join clips"
         case "music": return "Background music"
         case "speed": return "Speed"
         case "mute": return "Mute"
         case "volume": return "Volume"
-        default: return "AI change"
+        case "style_transfer": return "Visual style"
+        default: return "Edit"
         }
     }
 }
