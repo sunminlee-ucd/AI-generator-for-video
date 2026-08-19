@@ -76,8 +76,11 @@ class EditOperation(BaseModel):
 
     @model_validator(mode="after")
     def validate_required_fields(self):
-        if self.type == "trim" and self.start_seconds is None and self.end_seconds is None:
-            raise ValueError("trim requires start_seconds or end_seconds")
+        if self.type == "trim":
+            if self.start_seconds is None and self.end_seconds is None:
+                raise ValueError("trim requires start_seconds or end_seconds")
+            if self.start_seconds is not None and self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+                raise ValueError("trim end_seconds must be after start_seconds")
         if self.type == "speed" and self.speed is None:
             raise ValueError("speed requires speed")
         if self.type == "volume" and self.volume is None:
