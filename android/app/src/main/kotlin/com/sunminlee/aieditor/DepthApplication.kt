@@ -9,11 +9,13 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
+import android.view.animation.OvershootInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -89,7 +91,7 @@ class DepthApplication : Application(), Application.ActivityLifecycleCallbacks {
 
         val grid = LinearLayout(container.context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dpInt(2f), 0, dpInt(8f))
+            setPadding(0, dpInt(1f), 0, dpInt(4f))
             tag = "compact-section-grid"
         }
         val subtitles = listOf("Direct edit", "Ask AI", "Fine-tune", "Add media")
@@ -103,26 +105,27 @@ class DepthApplication : Application(), Application.ActivityLifecycleCallbacks {
                 val selected = titles[index] == activeTitle
                 val button = com.sunminlee.aieditor.Button(container.context).apply {
                     text = "${titles[index]}\n${subtitles[index]}"
-                    textSize = 12.5f
+                    textSize = 12f
                     gravity = Gravity.CENTER
                     setTextColor(Color.rgb(25, 79, 42))
                     minHeight = 0
                     minimumHeight = 0
-                    setPadding(dpInt(8f), dpInt(7f), dpInt(8f), dpInt(7f))
+                    includeFontPadding = false
+                    setPadding(dpInt(6f), dpInt(4f), dpInt(6f), dpInt(4f))
                     background = rounded(
                         if (selected) Color.rgb(205, 232, 204) else if (index % 2 == 0) Color.rgb(226, 244, 224) else Color.rgb(255, 244, 190),
-                        17f,
+                        15f,
                         if (selected) Color.rgb(47, 125, 50) else Color.rgb(249, 199, 79),
                         if (selected) 2 else 1,
                     )
                     setOnClickListener { headers[index].performClick() }
                 }
-                row.addView(button, LinearLayout.LayoutParams(0, dpInt(62f), 1f).apply {
-                    if (column == 0) marginEnd = dpInt(5f) else marginStart = dpInt(5f)
+                row.addView(button, LinearLayout.LayoutParams(0, dpInt(50f), 1f).apply {
+                    if (column == 0) marginEnd = dpInt(3f) else marginStart = dpInt(3f)
                 })
             }
             grid.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
-                if (rowIndex == 0) bottomMargin = dpInt(8f)
+                if (rowIndex == 0) bottomMargin = dpInt(5f)
             })
         }
 
@@ -130,7 +133,7 @@ class DepthApplication : Application(), Application.ActivityLifecycleCallbacks {
         container.addView(grid, LinearLayout.LayoutParams(-1, -2))
         if (activeCard != null) {
             activeCard.getChildAt(0).visibility = View.GONE
-            activeCard.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpInt(2f) }
+            activeCard.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpInt(1f) }
             container.addView(activeCard)
         }
     }
@@ -164,17 +167,18 @@ class DepthApplication : Application(), Application.ActivityLifecycleCallbacks {
         }
         val button = com.sunminlee.aieditor.Button(container.context).apply {
             text = "3D Turn\nFront · side · back"
-            textSize = 13f
+            textSize = 12.5f
             gravity = Gravity.CENTER
+            includeFontPadding = false
             setTextColor(Color.rgb(25, 79, 42))
-            setPadding(dpInt(8f), dpInt(8f), dpInt(8f), dpInt(8f))
-            background = rounded(Color.rgb(255, 244, 190), 20f, Color.rgb(249, 199, 79), 1)
+            setPadding(dpInt(7f), dpInt(5f), dpInt(7f), dpInt(5f))
+            background = rounded(Color.rgb(255, 244, 190), 17f, Color.rgb(249, 199, 79), 1)
             setOnClickListener {
                 container.context.startActivity(Intent(container.context, PhotoTurnActivity::class.java))
             }
         }
-        row.addView(button, LinearLayout.LayoutParams(0, dpInt(78f), 1f).apply { marginEnd = dpInt(6f) })
-        row.addView(View(container.context), LinearLayout.LayoutParams(0, dpInt(78f), 1f).apply { marginStart = dpInt(6f) })
+        row.addView(button, LinearLayout.LayoutParams(0, dpInt(64f), 1f).apply { marginEnd = dpInt(4f) })
+        row.addView(View(container.context), LinearLayout.LayoutParams(0, dpInt(64f), 1f).apply { marginStart = dpInt(4f) })
         container.addView(row, LinearLayout.LayoutParams(-1, -2))
         container.tag = "photo-turn-injected"
     }
@@ -191,25 +195,70 @@ class DepthApplication : Application(), Application.ActivityLifecycleCallbacks {
         button.translationZ = dp(1.5f)
         button.outlineProvider = ViewOutlineProvider.BACKGROUND
         button.clipToOutline = false
+        button.minHeight = 0
+        button.minimumHeight = 0
+
+        // Multi-line tool tiles previously had a lot of empty vertical space. Tighten them
+        // while preserving a comfortable touch target.
+        val text = button.text?.toString().orEmpty()
+        val params = button.layoutParams
+        if (text.contains('\n') && params != null && params.height > dpInt(64f)) {
+            params.height = dpInt(64f)
+            if (params is ViewGroup.MarginLayoutParams) {
+                params.leftMargin = minOf(params.leftMargin, dpInt(4f))
+                params.rightMargin = minOf(params.rightMargin, dpInt(4f))
+                params.marginStart = minOf(params.marginStart, dpInt(4f))
+                params.marginEnd = minOf(params.marginEnd, dpInt(4f))
+            }
+            button.layoutParams = params
+            button.includeFontPadding = false
+            button.setPadding(dpInt(7f), dpInt(5f), dpInt(7f), dpInt(5f))
+        }
 
         val stateAnimator = StateListAnimator().apply {
             addState(
                 intArrayOf(android.R.attr.state_pressed),
-                ObjectAnimator.ofFloat(button, "translationZ", dp(0f)).apply { duration = 70 }
+                ObjectAnimator.ofFloat(button, "translationZ", dp(0f)).apply { duration = 45 }
             )
             addState(
                 intArrayOf(),
-                ObjectAnimator.ofFloat(button, "translationZ", dp(1.5f)).apply { duration = 120 }
+                ObjectAnimator.ofFloat(button, "translationZ", dp(1.5f)).apply { duration = 130 }
             )
         }
         button.stateListAnimator = stateAnimator
 
-        button.setOnTouchListener { target, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> target.animate().scaleX(0.965f).scaleY(0.965f).translationY(dp(2f)).setDuration(70).start()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> target.animate().scaleX(1f).scaleY(1f).translationY(0f).setDuration(110).start()
+        // Our custom Button already owns a stronger haptic/scale/bounce listener. Do not
+        // overwrite it here. Native dialog buttons still get the same tactile treatment.
+        if (button !is com.sunminlee.aieditor.Button) {
+            button.isHapticFeedbackEnabled = true
+            button.setOnTouchListener { target, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        target.animate().cancel()
+                        target.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        target.animate()
+                            .scaleX(0.92f)
+                            .scaleY(0.92f)
+                            .translationY(dp(3f))
+                            .alpha(0.7f)
+                            .setDuration(45)
+                            .setInterpolator(null)
+                            .start()
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        target.animate().cancel()
+                        target.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .translationY(0f)
+                            .alpha(1f)
+                            .setDuration(150)
+                            .setInterpolator(OvershootInterpolator(1.7f))
+                            .start()
+                    }
+                }
+                false
             }
-            false
         }
     }
 
