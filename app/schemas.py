@@ -79,6 +79,7 @@ class EditOperation(BaseModel):
     # Lightweight front/side/back turntable animation settings.
     turn_duration_seconds: float | None = Field(default=4.0, ge=2.0, le=8.0)
     turn_direction: Literal["left", "right"] | None = "left"
+    remove_background: bool = True
 
     @model_validator(mode="after")
     def validate_required_fields(self):
