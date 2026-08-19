@@ -95,7 +95,11 @@ class Button(context: Context) : android.widget.Button(context) {
 
     private fun loadingTextFor(status: String?, label: String): String? = when (status) {
         "AI is planning" -> if (label == "Ask AI") "AI is planning…" else null
-        "Rendering" -> if (label == "Apply AI changes" || label == "Render my changes") "Rendering… Please wait" else null
+        "Rendering" -> when (label) {
+            "Apply AI changes", "Render my changes" -> "Rendering… Please wait"
+            "Create 3D Turn" -> "Creating 3D Turn…"
+            else -> null
+        }
         "Uploading" -> if (label == "Choose photo or video") "Uploading… Please wait" else null
         "Adding media" -> when (label) {
             "Add photo or video" -> "Adding media…"
@@ -111,7 +115,8 @@ class Button(context: Context) : android.widget.Button(context) {
         "Ask AI",
         "Apply AI changes",
         "Render my changes",
-        "Add photo or video"
+        "Add photo or video",
+        "Create 3D Turn"
     )
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -132,7 +137,7 @@ class TextView(context: Context) : android.widget.TextView(context) {
         super.setText(display, type)
         when (raw) {
             "AI is planning", "Rendering", "Uploading", "Adding media", "Adding music" -> UiBusyState.update(raw)
-            "Ready", "Failed", "Edit added", "Edit removed" -> UiBusyState.update(null)
+            "Ready", "Failed", "Edit added", "Edit removed", "Choose three photos", "Choose all three photos", "Ready to create" -> UiBusyState.update(null)
         }
     }
 }
