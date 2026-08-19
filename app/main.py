@@ -5,7 +5,6 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 import os
-import shutil
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -303,7 +302,11 @@ def _render_job(job_id: str, project_id: str) -> None:
         assets = store.asset_map(project)
         project_dir = PROJECTS_DIR / project_id
         standard_ops = [op for op in operations if op.type != "style_transfer"]
-        base_preview = project_dir / "preview_base.mp4"
+        style_ops = [op for op in operations if op.enabled and op.type == "style_transfer"]
+
+        # Without a generative style stage the FFmpeg preview is already the final preview, so
+        # render directly to it and avoid copying the complete video once more.
+        base_preview = project_dir / ("preview_style_base.mp4" if style_ops else "preview.mp4")
         ffmpeg.render(
             source,
             standard_ops,
@@ -312,14 +315,12 @@ def _render_job(job_id: str, project_id: str) -> None:
             source_kind=project.get("source_kind", "video"),
             source_duration=float(project.get("metadata", {}).get("duration_seconds") or 5.0),
         )
-        style_ops = [op for op in operations if op.enabled and op.type == "style_transfer"]
         if style_ops:
             final = project_dir / "preview_wan.mp4"
             latest_style = style_ops[-1]
             WanEngine().generate_preview(base_preview, latest_style.style_prompt or "", final)
         else:
-            final = project_dir / "preview.mp4"
-            shutil.copy2(base_preview, final)
+            final = base_preview
         store.set_preview(project_id, final)
         _update_job(job_id, status="completed", output_url=f"/api/projects/{project_id}/media/preview")
     except Exception as exc:
