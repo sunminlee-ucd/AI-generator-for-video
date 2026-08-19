@@ -20,6 +20,7 @@ OperationType = Literal[
     "concat",
     "music",
     "style_transfer",
+    "photo_turn_3d",
 ]
 EasingType = Literal["linear", "ease_in", "ease_out", "ease_in_out"]
 
@@ -40,6 +41,7 @@ class EditOperation(BaseModel):
     end_seconds: float | None = Field(default=None, ge=0)
     source_asset_id: str | None = None
     secondary_asset_id: str | None = None
+    tertiary_asset_id: str | None = None
 
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
     volume: float | None = Field(default=None, ge=0.0, le=4.0)
@@ -74,6 +76,10 @@ class EditOperation(BaseModel):
 
     style_prompt: str | None = Field(default=None, max_length=1500)
 
+    # Lightweight front/side/back turntable animation settings.
+    turn_duration_seconds: float | None = Field(default=4.0, ge=2.0, le=8.0)
+    turn_direction: Literal["left", "right"] | None = "left"
+
     @model_validator(mode="after")
     def validate_required_fields(self):
         if self.type == "trim":
@@ -105,6 +111,13 @@ class EditOperation(BaseModel):
             raise ValueError("music requires source_asset_id")
         if self.type == "style_transfer" and not self.style_prompt:
             raise ValueError("style_transfer requires style_prompt")
+        if self.type == "photo_turn_3d":
+            if not self.secondary_asset_id or not self.tertiary_asset_id:
+                raise ValueError("photo_turn_3d requires side and back photo asset IDs")
+            if self.secondary_asset_id == self.tertiary_asset_id:
+                raise ValueError("photo_turn_3d side and back photos must be different assets")
+            if self.turn_duration_seconds is None:
+                raise ValueError("photo_turn_3d requires turn_duration_seconds")
         if self.motion_keyframes:
             if self.type not in {"masked_video", "masked_media", "picture_in_picture", "media_overlay"}:
                 raise ValueError("motion_keyframes are supported only for visual layer operations")
