@@ -12,13 +12,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import GEMINI_API_KEY, GEMINI_MODEL, MAX_UPLOAD_MB, PROJECTS_DIR
-from app.schemas import ApplyPlanRequest, CommandRequest, EditPlan, ReplaceOperationsRequest
+from app.schemas import ApplyPlanRequest, CommandRequest, EditPlan, EditOperation, ReplaceOperationsRequest
 from app.services.render_optimizer import OptimizedFFmpegEngine
 from app.services.gemini_planner import GeminiPlanner
 from app.services.project_store import ProjectStore
 from app.services.wan_engine import WanEngine
 
-app = FastAPI(title="AI Video Editor", version="0.4.0")
+app = FastAPI(title="AI Video Editor", version="0.5.0")
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 store = ProjectStore()
@@ -39,6 +39,7 @@ def health():
         "status": "ok",
         "media_kinds": ["video", "image", "audio"],
         "native_clients": ["ios", "android"],
+        "manual_editing": True,
         "ai": {
             "provider": "gemini",
             "configured": bool(GEMINI_API_KEY),
@@ -105,6 +106,7 @@ def command(project_id: str, request: CommandRequest):
         raise HTTPException(status_code=404, detail="Project not found") from exc
     try:
         plan = GeminiPlanner().plan(request.prompt, project["metadata"], project.get("assets", []), project.get("source_kind", "video"))
+        _validate_operations_for_project(project, store.operations(project) + plan.operations)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Gemini planning failed: {exc}") from exc
     return {"status": "proposal", "assistant_message": plan.assistant_message, "plan": plan.model_dump(mode="json")}
@@ -113,9 +115,14 @@ def command(project_id: str, request: CommandRequest):
 @app.post("/api/projects/{project_id}/apply-plan")
 def apply_plan(project_id: str, request: ApplyPlanRequest):
     try:
-        store.get(project_id)
+        project = store.get(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
+    _ensure_no_active_render(project_id)
+    try:
+        _validate_operations_for_project(project, store.operations(project) + request.operations)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     plan = EditPlan(assistant_message=request.assistant_message, operations=request.operations)
     store.apply_plan(project_id, request.prompt, plan)
     return _queue_render(project_id, plan)
@@ -124,9 +131,15 @@ def apply_plan(project_id: str, request: ApplyPlanRequest):
 @app.put("/api/projects/{project_id}/operations")
 def replace_operations(project_id: str, request: ReplaceOperationsRequest):
     try:
-        store.replace_operations(project_id, request.operations)
+        project = store.get(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
+    _ensure_no_active_render(project_id)
+    try:
+        _validate_operations_for_project(project, request.operations)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store.replace_operations(project_id, request.operations)
     return _queue_render(project_id, EditPlan(assistant_message="Updated the fine-tuned edit settings.", operations=[]))
 
 
@@ -142,10 +155,12 @@ def get_job(job_id: str):
 @app.post("/api/projects/{project_id}/undo")
 def undo(project_id: str):
     try:
-        store.undo(project_id)
+        store.get(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Project not found") from exc
-    return _queue_render(project_id, EditPlan(assistant_message="Undid the last AI edit.", operations=[]))
+    _ensure_no_active_render(project_id)
+    store.undo(project_id)
+    return _queue_render(project_id, EditPlan(assistant_message="Undid the last edit.", operations=[]))
 
 
 @app.get("/api/projects/{project_id}/media/{kind}")
@@ -199,9 +214,65 @@ def _save_upload(file: UploadFile) -> Path:
     return temp_path
 
 
+def _validate_operations_for_project(project: dict, operations: list[EditOperation]) -> None:
+    duration = float(project.get("metadata", {}).get("duration_seconds") or 0.0)
+    assets = {asset["id"]: asset for asset in project.get("assets", [])}
+
+    def require_asset(asset_id: str | None, kinds: set[str], label: str) -> None:
+        if not asset_id or asset_id not in assets:
+            raise ValueError(f"{label} requires an uploaded media asset")
+        actual = assets[asset_id].get("kind")
+        if actual not in kinds:
+            expected = "photo or video" if kinds == {"video", "image"} else "/".join(sorted(kinds))
+            raise ValueError(f"{label} requires {expected} media")
+
+    for operation in operations:
+        if not operation.enabled:
+            continue
+        if operation.type == "trim":
+            start = operation.start_seconds or 0.0
+            end = operation.end_seconds if operation.end_seconds is not None else duration
+            if end <= start:
+                raise ValueError("Trim end must be after trim start")
+            if duration > 0 and end > duration + 0.05:
+                raise ValueError(f"Trim end cannot exceed project duration ({duration:.2f}s)")
+        elif operation.type in {"split_screen", "picture_in_picture"}:
+            require_asset(operation.secondary_asset_id, {"video", "image"}, operation.type.replace("_", " "))
+        elif operation.type == "concat":
+            require_asset(operation.secondary_asset_id, {"video"}, "Join clips")
+        elif operation.type in {"media_overlay", "masked_media"}:
+            require_asset(operation.source_asset_id, {"video", "image"}, operation.type.replace("_", " "))
+        elif operation.type == "masked_video":
+            require_asset(operation.secondary_asset_id, {"video", "image"}, "Shape background")
+        elif operation.type == "music":
+            require_asset(operation.source_asset_id, {"audio"}, "Background music")
+
+        if operation.motion_keyframes and duration > 0:
+            latest = max(frame.time_seconds for frame in operation.motion_keyframes)
+            if latest > duration + 0.05:
+                raise ValueError(f"Motion point at {latest:.2f}s exceeds project duration ({duration:.2f}s)")
+
+
+def _ensure_no_active_render(project_id: str) -> None:
+    with jobs_lock:
+        active = any(
+            job.get("project_id") == project_id and job.get("status") in {"queued", "running"}
+            for job in jobs.values()
+        )
+    if active:
+        raise HTTPException(status_code=409, detail="A render is already running for this project. Please wait for it to finish.")
+
+
 def _queue_render(project_id: str, plan: EditPlan) -> dict:
     job_id = uuid4().hex
     with jobs_lock:
+        active = any(
+            job.get("project_id") == project_id and job.get("status") in {"queued", "running"}
+            for job in jobs.values()
+        )
+        if active:
+            raise HTTPException(status_code=409, detail="A render is already running for this project. Please wait for it to finish.")
+        _prune_jobs_locked()
         jobs[job_id] = {
             "id": job_id,
             "project_id": project_id,
@@ -213,6 +284,14 @@ def _queue_render(project_id: str, plan: EditPlan) -> dict:
         }
     executor.submit(_render_job, job_id, project_id)
     return {"job_id": job_id, "status": "queued", "assistant_message": plan.assistant_message}
+
+
+def _prune_jobs_locked(limit: int = 250) -> None:
+    if len(jobs) < limit:
+        return
+    removable = [job_id for job_id, job in jobs.items() if job.get("status") in {"completed", "failed"}]
+    while len(jobs) >= limit and removable:
+        jobs.pop(removable.pop(0), None)
 
 
 def _render_job(job_id: str, project_id: str) -> None:
