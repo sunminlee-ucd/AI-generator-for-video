@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from app.config import FFMPEG_BIN, PREVIEW_CRF, PREVIEW_MAX_DIMENSION, PREVIEW_PRESET
 from app.services.ffmpeg_engine import _run
@@ -14,14 +14,14 @@ from app.services.ffmpeg_engine import _run
 class PhotoTurnRenderer:
     """Create a lightweight 3D-like turntable clip from front/side/back photos.
 
-    The MVP first isolates the subject from simple/mostly uniform backgrounds, normalizes the
-    subject scale/position across all three views, then renders a front -> side -> back -> side
-    -> front sequence. The transition frames are generated with Pillow instead of FFmpeg xfade.
-    This avoids xfade constant-frame-rate compatibility failures seen on newer FFmpeg builds
-    while keeping the feature CPU-friendly for the current Cloud Run service.
+    This remains a deterministic 2.5D MVP rather than a true mesh reconstruction. The renderer
+    isolates and aligns the subject, then uses perspective-like horizontal foreshortening plus a
+    directional wipe between neighbouring views. That avoids the double-exposure/ghosting caused
+    by full-frame crossfades and reads much more like a physical object rotating.
     """
 
-    FPS = 24
+    FPS = 60
+    CREAM = (255, 249, 230)
 
     def render(
         self,
@@ -37,7 +37,13 @@ class PhotoTurnRenderer:
         remove_background: bool = True,
     ) -> Path:
         output.parent.mkdir(parents=True, exist_ok=True)
-        width, height = self._preview_dimensions(width, height)
+
+        # Phone photos commonly carry EXIF orientation rather than physically rotated pixels.
+        # Use the visually-correct front-photo dimensions so the output itself is encoded upright
+        # instead of relying on a rotation metadata flag that some players ignore.
+        natural_width, natural_height = self._display_dimensions(front)
+        width, height = self._preview_dimensions(natural_width or width, natural_height or height)
+
         duration = max(2.0, min(float(duration_seconds), 8.0))
         frame_count = max(self.FPS * 2, int(round(duration * self.FPS)))
 
@@ -54,30 +60,29 @@ class PhotoTurnRenderer:
                 try:
                     for path in prepared_paths:
                         with Image.open(path) as opened:
-                            views.append(opened.convert("RGB"))
+                            views.append(opened.convert("RGBA"))
 
-                    # Reusing the same side view on the return leg is deliberate for the 3-photo MVP.
+                    # With only three photos the side view is intentionally reused on the return leg.
                     sequence = [views[0], views[1], views[2], views[1], views[0]]
                     direction_sign = -1 if direction == "left" else 1
 
                     for index in range(frame_count):
-                        progress = index / max(1, frame_count - 1) * 4.0
+                        # Divide by frame_count rather than frame_count - 1 so the last frame sits just
+                        # before the first one. This removes a visible pause when the result loops.
+                        progress = index / frame_count * 4.0
                         segment = min(3, int(progress))
                         local = progress - segment
-                        eased = self._smoothstep(local)
+                        eased = self._smootherstep(local)
 
-                        frame = Image.blend(sequence[segment], sequence[segment + 1], eased)
-
-                        # A very small directional drift makes the cross-view blend feel more like
-                        # a turntable movement without introducing expensive 3D reconstruction.
-                        drift = int(round(math.sin(local * math.pi) * width * 0.012)) * direction_sign
-                        if drift:
-                            shifted = Image.new("RGB", (width, height), (255, 249, 230))
-                            shifted.paste(frame, (drift, 0))
-                            frame.close()
-                            frame = shifted
-
-                        frame.save(frame_dir / f"frame_{index:04d}.jpg", "JPEG", quality=88)
+                        frame = self._yaw_frame(
+                            sequence[segment],
+                            sequence[segment + 1],
+                            eased,
+                            direction_sign,
+                            width,
+                            height,
+                        )
+                        frame.save(frame_dir / f"frame_{index:04d}.jpg", "JPEG", quality=92, subsampling=1)
                         frame.close()
                 finally:
                     for view in views:
@@ -90,8 +95,6 @@ class PhotoTurnRenderer:
                     str(self.FPS),
                     "-i",
                     str(frame_dir / "frame_%04d.jpg"),
-                    "-t",
-                    f"{duration:.4f}",
                     "-an",
                     "-c:v",
                     "libx264",
@@ -99,8 +102,12 @@ class PhotoTurnRenderer:
                     PREVIEW_PRESET,
                     "-crf",
                     str(PREVIEW_CRF),
+                    "-r",
+                    str(self.FPS),
                     "-pix_fmt",
                     "yuv420p",
+                    "-map_metadata",
+                    "-1",
                     "-movflags",
                     "+faststart",
                     str(output),
@@ -112,30 +119,141 @@ class PhotoTurnRenderer:
             for path in prepared_paths:
                 path.unlink(missing_ok=True)
 
+    def _yaw_frame(
+        self,
+        current: Image.Image,
+        next_view: Image.Image,
+        progress: float,
+        direction_sign: int,
+        width: int,
+        height: int,
+    ) -> Image.Image:
+        """Build one pseudo-yaw frame without full-frame opacity blending.
+
+        Each neighbouring photo is horizontally foreshortened as if it were a face rotating away
+        from / toward the camera. Around the middle of the turn a soft directional wipe switches
+        spatial regions from one view to the next, so there is no translucent double image.
+        """
+        angle = progress * math.pi / 2.0
+        current_factor = max(0.12, math.cos(angle))
+        next_factor = max(0.12, math.sin(angle))
+
+        current_shift = int(round((1.0 - current_factor) * width * 0.025)) * direction_sign
+        next_shift = -int(round((1.0 - next_factor) * width * 0.025)) * direction_sign
+
+        current_layer = self._foreshorten(current, current_factor, current_shift)
+        next_layer = self._foreshorten(next_view, next_factor, next_shift)
+
+        switch_start = 0.24
+        switch_end = 0.76
+        if progress <= switch_start:
+            layer = current_layer
+            next_layer.close()
+        elif progress >= switch_end:
+            layer = next_layer
+            current_layer.close()
+        else:
+            reveal = self._smootherstep((progress - switch_start) / (switch_end - switch_start))
+            mask = self._directional_wipe_mask(width, height, reveal, direction_sign)
+            layer = Image.composite(next_layer, current_layer, mask)
+            mask.close()
+            current_layer.close()
+            next_layer.close()
+
+        # A slight vertical settle at the most foreshortened point makes the movement feel grounded.
+        settle = int(round(math.sin(progress * math.pi) * height * 0.006))
+        if settle:
+            settled = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            settled.alpha_composite(layer, (0, settle))
+            layer.close()
+            layer = settled
+
+        result = self._composite_subject(layer, width, height)
+        layer.close()
+        return result
+
+    def _foreshorten(self, view: Image.Image, factor: float, shift_x: int) -> Image.Image:
+        target_width = max(2, int(round(view.width * factor)))
+        compressed = view.resize((target_width, view.height), Image.Resampling.BICUBIC)
+        layer = Image.new("RGBA", view.size, (0, 0, 0, 0))
+        x = (view.width - target_width) // 2 + shift_x
+        layer.alpha_composite(compressed, (x, 0))
+        compressed.close()
+        return layer
+
+    def _directional_wipe_mask(
+        self,
+        width: int,
+        height: int,
+        reveal: float,
+        direction_sign: int,
+    ) -> Image.Image:
+        reveal = max(0.0, min(1.0, reveal))
+        feather = max(10, width // 30)
+        edge = reveal * (width + feather * 2) - feather
+        values: list[int] = []
+        for x in range(width):
+            position = x if direction_sign < 0 else width - 1 - x
+            value = int(round((edge - position + feather / 2) / feather * 255))
+            values.append(max(0, min(255, value)))
+        strip = Image.new("L", (width, 1))
+        strip.putdata(values)
+        mask = strip.resize((width, height), Image.Resampling.NEAREST)
+        strip.close()
+        return mask
+
+    def _composite_subject(self, layer: Image.Image, width: int, height: int) -> Image.Image:
+        canvas = Image.new("RGBA", (width, height), (*self.CREAM, 255))
+
+        alpha = layer.getchannel("A")
+        shadow_alpha = alpha.filter(ImageFilter.GaussianBlur(radius=max(2, width // 260)))
+        shadow_alpha = shadow_alpha.point(lambda value: int(value * 0.16))
+        shadow = Image.new("RGBA", (width, height), (18, 48, 27, 0))
+        shadow.putalpha(shadow_alpha)
+        canvas.alpha_composite(shadow, (max(2, width // 190), max(3, height // 155)))
+        canvas.alpha_composite(layer)
+
+        result = canvas.convert("RGB")
+        alpha.close()
+        shadow_alpha.close()
+        shadow.close()
+        canvas.close()
+        return result
+
     def _prepare_view(self, source: Path, target: Path, width: int, height: int, *, remove_background: bool) -> None:
         with Image.open(source) as opened:
-            image = opened.convert("RGBA")
+            oriented = ImageOps.exif_transpose(opened)
+            image = oriented.convert("RGBA")
+            if oriented is not opened:
+                oriented.close()
 
         # Keep segmentation work bounded even when the user uploads a very large phone photo.
         analysis_max = 1400
         longest = max(image.size)
         if longest > analysis_max:
             ratio = analysis_max / longest
-            image = image.resize((max(2, int(image.width * ratio)), max(2, int(image.height * ratio))), Image.Resampling.LANCZOS)
+            resized = image.resize(
+                (max(2, int(image.width * ratio)), max(2, int(image.height * ratio))),
+                Image.Resampling.LANCZOS,
+            )
+            image.close()
+            image = resized
 
         if remove_background:
-            image = self._remove_simple_background(image)
+            cleaned = self._remove_simple_background(image)
+            if cleaned is not image:
+                image.close()
+                image = cleaned
 
         alpha = image.getchannel("A")
         threshold = alpha.point(lambda value: 255 if value > 24 else 0)
         bbox = threshold.getbbox()
-        if bbox:
-            cropped = image.crop(bbox)
-        else:
-            cropped = image
+        alpha.close()
+        threshold.close()
 
-        # Normalize all views to nearly the same subject height. This is the most important
-        # visual step after background removal for making front/side/back feel like one object.
+        cropped = image.crop(bbox) if bbox else image.copy()
+
+        # Normalize all views to nearly the same subject height so view changes do not jump in size.
         target_w = max(2, int(width * 0.84))
         target_h = max(2, int(height * 0.84))
         scale = min(target_w / max(1, cropped.width), target_h / max(1, cropped.height))
@@ -144,33 +262,21 @@ class PhotoTurnRenderer:
             Image.Resampling.LANCZOS,
         )
 
-        canvas = Image.new("RGBA", (width, height), (255, 249, 230, 255))
+        # Keep the prepared view transparent. The background and shadow are added after perspective
+        # warping, otherwise the background itself would appear to rotate with the object.
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         x = (width - fitted.width) // 2
         y = max(0, int((height - fitted.height) * 0.46))
-
-        # Soft drop shadow gives the isolated object a little volume without requiring 3D geometry.
-        shadow_alpha = fitted.getchannel("A").filter(ImageFilter.GaussianBlur(radius=max(2, width // 300)))
-        shadow = Image.new("RGBA", fitted.size, (20, 55, 28, 0))
-        shadow.putalpha(shadow_alpha.point(lambda value: int(value * 0.18)))
-        canvas.alpha_composite(shadow, (x + max(2, width // 180), y + max(3, height // 150)))
         canvas.alpha_composite(fitted, (x, y))
-        canvas.convert("RGB").save(target, "PNG", optimize=True)
+        canvas.save(target, "PNG", optimize=True)
 
         image.close()
-        if cropped is not image:
-            cropped.close()
+        cropped.close()
         fitted.close()
-        shadow.close()
-        shadow_alpha.close()
         canvas.close()
 
     def _remove_simple_background(self, image: Image.Image) -> Image.Image:
-        """Fast CPU-only background cleanup for product/object photos.
-
-        Flood-filling from all four corners keeps similarly-coloured details inside the object more
-        often than a global colour threshold. It works best with plain or softly varying backgrounds.
-        If the inferred foreground is implausible, we keep the original image rather than destroying it.
-        """
+        """Fast CPU-only background cleanup for simple product/object photos."""
         rgb = image.convert("RGB")
         work = rgb.copy()
         marker = (1, 254, 253)
@@ -199,7 +305,6 @@ class PhotoTurnRenderer:
 
         foreground_pixels = sum(1 for value in foreground.getdata() if value)
         coverage = foreground_pixels / max(1, work.width * work.height)
-        # Too little/too much detected foreground usually means the background was not simple enough.
         if coverage < 0.04 or coverage > 0.94:
             rgb.close()
             work.close()
@@ -207,25 +312,35 @@ class PhotoTurnRenderer:
             foreground.close()
             return image
 
-        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=1.2))
+        softened = alpha.filter(ImageFilter.GaussianBlur(radius=1.2))
         result = image.copy()
         original_alpha = image.getchannel("A")
         combined = Image.new("L", image.size)
-        combined.putdata([min(a, b) for a, b in zip(original_alpha.getdata(), alpha.getdata())])
+        combined.putdata([min(a, b) for a, b in zip(original_alpha.getdata(), softened.getdata())])
         result.putalpha(combined)
 
         rgb.close()
         work.close()
         alpha.close()
         foreground.close()
+        softened.close()
         original_alpha.close()
         combined.close()
         return result
 
     @staticmethod
-    def _smoothstep(value: float) -> float:
+    def _display_dimensions(source: Path) -> tuple[int, int]:
+        with Image.open(source) as opened:
+            oriented = ImageOps.exif_transpose(opened)
+            size = oriented.size
+            if oriented is not opened:
+                oriented.close()
+        return int(size[0]), int(size[1])
+
+    @staticmethod
+    def _smootherstep(value: float) -> float:
         value = max(0.0, min(1.0, value))
-        return value * value * (3.0 - 2.0 * value)
+        return value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
 
     @staticmethod
     def _even(value: int) -> int:
