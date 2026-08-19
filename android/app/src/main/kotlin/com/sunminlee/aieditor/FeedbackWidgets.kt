@@ -3,7 +3,9 @@ package com.sunminlee.aieditor
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.Animatable
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.animation.OvershootInterpolator
 import android.widget.ProgressBar
 import java.lang.ref.WeakReference
 
@@ -26,7 +28,7 @@ private object UiBusyState {
     fun current(): String? = currentLabel
 }
 
-/** Adds clear press feedback and a shared loading state to programmatic editor buttons. */
+/** Adds unmistakable press feedback and a shared loading state to editor buttons. */
 class Button(context: Context) : android.widget.Button(context) {
     private var baseLabel = ""
     private var changingInternally = false
@@ -37,21 +39,34 @@ class Button(context: Context) : android.widget.Button(context) {
 
     init {
         isAllCaps = false
+        isHapticFeedbackEnabled = true
+        isSoundEffectsEnabled = true
         setOnTouchListener { _, event ->
             if (!isEnabled) return@setOnTouchListener false
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> animate()
-                    .scaleX(0.96f)
-                    .scaleY(0.96f)
-                    .alpha(0.74f)
-                    .setDuration(65)
-                    .start()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .alpha(1f)
-                    .setDuration(115)
-                    .start()
+                MotionEvent.ACTION_DOWN -> {
+                    animate().cancel()
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    animate()
+                        .scaleX(0.92f)
+                        .scaleY(0.92f)
+                        .translationY(dp(3).toFloat())
+                        .alpha(0.68f)
+                        .setDuration(45)
+                        .setInterpolator(null)
+                        .start()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    animate().cancel()
+                    animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .translationY(0f)
+                        .alpha(1f)
+                        .setDuration(150)
+                        .setInterpolator(OvershootInterpolator(1.7f))
+                        .start()
+                }
             }
             false
         }
@@ -72,10 +87,14 @@ class Button(context: Context) : android.widget.Button(context) {
             alpha = 1f
             scaleX = 1f
             scaleY = 1f
+            translationY = 0f
             setCompoundDrawables(null, null, null, null)
             super.setText(baseLabel)
         } else {
             isEnabled = false
+            scaleX = 1f
+            scaleY = 1f
+            translationY = 0f
             if (loadingText != null) {
                 val primary = isPrimaryAction(baseLabel)
                 spinner.setTint(if (primary) Color.WHITE else Color.rgb(25, 79, 42))
