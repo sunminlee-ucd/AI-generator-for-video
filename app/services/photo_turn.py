@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -14,9 +16,12 @@ class PhotoTurnRenderer:
 
     The MVP first isolates the subject from simple/mostly uniform backgrounds, normalizes the
     subject scale/position across all three views, then renders a front -> side -> back -> side
-    -> front sequence using smooth directional blends. This is intentionally a CPU-friendly
-    2.5D illusion rather than a real 3D reconstruction.
+    -> front sequence. The transition frames are generated with Pillow instead of FFmpeg xfade.
+    This avoids xfade constant-frame-rate compatibility failures seen on newer FFmpeg builds
+    while keeping the feature CPU-friendly for the current Cloud Run service.
     """
+
+    FPS = 24
 
     def render(
         self,
@@ -34,10 +39,7 @@ class PhotoTurnRenderer:
         output.parent.mkdir(parents=True, exist_ok=True)
         width, height = self._preview_dimensions(width, height)
         duration = max(2.0, min(float(duration_seconds), 8.0))
-        transition = min(0.48, duration / 9.0)
-        segment = (duration + 4.0 * transition) / 5.0
-        step = segment - transition
-        transition_name = "smoothright" if direction == "right" else "smoothleft"
+        frame_count = max(self.FPS * 2, int(round(duration * self.FPS)))
 
         prepared_paths: list[Path] = []
         try:
@@ -46,45 +48,48 @@ class PhotoTurnRenderer:
                 self._prepare_view(source, target, width, height, remove_background=remove_background)
                 prepared_paths.append(target)
 
-            normalize = (
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0xFFF9E6,"
-                f"setsar=1,fps=30,trim=duration={segment:.4f},setpts=PTS-STARTPTS,format=yuv420p"
-            )
-            filters = [
-                f"[0:v]{normalize}[front]",
-                f"[1:v]{normalize}[side]",
-                f"[2:v]{normalize}[back]",
-                "[front]split=2[front_a][front_b]",
-                "[side]split=2[side_a][side_b]",
-                (
-                    f"[front_a][side_a]xfade=transition={transition_name}:"
-                    f"duration={transition:.4f}:offset={step:.4f}[turn1]"
-                ),
-                (
-                    f"[turn1][back]xfade=transition={transition_name}:"
-                    f"duration={transition:.4f}:offset={2 * step:.4f}[turn2]"
-                ),
-                (
-                    f"[turn2][side_b]xfade=transition={transition_name}:"
-                    f"duration={transition:.4f}:offset={3 * step:.4f}[turn3]"
-                ),
-                (
-                    f"[turn3][front_b]xfade=transition={transition_name}:"
-                    f"duration={transition:.4f}:offset={4 * step:.4f},"
-                    "eq=contrast=1.025:saturation=1.035,format=yuv420p[outv]"
-                ),
-            ]
+            with TemporaryDirectory(prefix="photo-turn-", dir=output.parent) as temp_dir:
+                frame_dir = Path(temp_dir)
+                views: list[Image.Image] = []
+                try:
+                    for path in prepared_paths:
+                        with Image.open(path) as opened:
+                            views.append(opened.convert("RGB"))
 
-            command = [FFMPEG_BIN, "-y"]
-            for prepared in prepared_paths:
-                command.extend(["-loop", "1", "-i", str(prepared)])
-            command.extend(
-                [
-                    "-filter_complex",
-                    ";".join(filters),
-                    "-map",
-                    "[outv]",
+                    # Reusing the same side view on the return leg is deliberate for the 3-photo MVP.
+                    sequence = [views[0], views[1], views[2], views[1], views[0]]
+                    direction_sign = -1 if direction == "left" else 1
+
+                    for index in range(frame_count):
+                        progress = index / max(1, frame_count - 1) * 4.0
+                        segment = min(3, int(progress))
+                        local = progress - segment
+                        eased = self._smoothstep(local)
+
+                        frame = Image.blend(sequence[segment], sequence[segment + 1], eased)
+
+                        # A very small directional drift makes the cross-view blend feel more like
+                        # a turntable movement without introducing expensive 3D reconstruction.
+                        drift = int(round(math.sin(local * math.pi) * width * 0.012)) * direction_sign
+                        if drift:
+                            shifted = Image.new("RGB", (width, height), (255, 249, 230))
+                            shifted.paste(frame, (drift, 0))
+                            frame.close()
+                            frame = shifted
+
+                        frame.save(frame_dir / f"frame_{index:04d}.jpg", "JPEG", quality=88)
+                        frame.close()
+                finally:
+                    for view in views:
+                        view.close()
+
+                command = [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-framerate",
+                    str(self.FPS),
+                    "-i",
+                    str(frame_dir / "frame_%04d.jpg"),
                     "-t",
                     f"{duration:.4f}",
                     "-an",
@@ -100,8 +105,8 @@ class PhotoTurnRenderer:
                     "+faststart",
                     str(output),
                 ]
-            )
-            _run(command)
+                _run(command)
+
             return output
         finally:
             for path in prepared_paths:
@@ -151,6 +156,14 @@ class PhotoTurnRenderer:
         canvas.alpha_composite(fitted, (x, y))
         canvas.convert("RGB").save(target, "PNG", optimize=True)
 
+        image.close()
+        if cropped is not image:
+            cropped.close()
+        fitted.close()
+        shadow.close()
+        shadow_alpha.close()
+        canvas.close()
+
     def _remove_simple_background(self, image: Image.Image) -> Image.Image:
         """Fast CPU-only background cleanup for product/object photos.
 
@@ -178,12 +191,20 @@ class PhotoTurnRenderer:
         foreground = alpha.point(lambda value: 255 if value > 20 else 0)
         bbox = foreground.getbbox()
         if not bbox:
+            rgb.close()
+            work.close()
+            alpha.close()
+            foreground.close()
             return image
 
         foreground_pixels = sum(1 for value in foreground.getdata() if value)
         coverage = foreground_pixels / max(1, work.width * work.height)
         # Too little/too much detected foreground usually means the background was not simple enough.
         if coverage < 0.04 or coverage > 0.94:
+            rgb.close()
+            work.close()
+            alpha.close()
+            foreground.close()
             return image
 
         alpha = alpha.filter(ImageFilter.GaussianBlur(radius=1.2))
@@ -192,7 +213,19 @@ class PhotoTurnRenderer:
         combined = Image.new("L", image.size)
         combined.putdata([min(a, b) for a, b in zip(original_alpha.getdata(), alpha.getdata())])
         result.putalpha(combined)
+
+        rgb.close()
+        work.close()
+        alpha.close()
+        foreground.close()
+        original_alpha.close()
+        combined.close()
         return result
+
+    @staticmethod
+    def _smoothstep(value: float) -> float:
+        value = max(0.0, min(1.0, value))
+        return value * value * (3.0 - 2.0 * value)
 
     @staticmethod
     def _even(value: int) -> int:
