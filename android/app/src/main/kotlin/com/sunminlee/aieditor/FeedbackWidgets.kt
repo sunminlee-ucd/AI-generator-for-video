@@ -96,8 +96,7 @@ class Button(context: Context) : android.widget.Button(context) {
             scaleY = 1f
             translationY = 0f
             if (loadingText != null) {
-                val primary = isPrimaryAction(baseLabel)
-                spinner.setTint(if (primary) Color.rgb(13, 24, 16) else Color.WHITE)
+                spinner.setTint(Color.WHITE)
                 setCompoundDrawables(spinner, null, null, null)
                 compoundDrawablePadding = dp(9)
                 (spinner as? Animatable)?.start()
@@ -128,15 +127,6 @@ class Button(context: Context) : android.widget.Button(context) {
         "Adding music" -> if (label == "Add background music") "Adding music…" else null
         else -> null
     }
-
-    private fun isPrimaryAction(label: String) = label in setOf(
-        "Choose photo or video",
-        "Ask AI",
-        "Apply AI changes",
-        "Render my changes",
-        "Add photo or video",
-        "Create 3D Turn"
-    )
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }
