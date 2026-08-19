@@ -5,14 +5,10 @@ actor APIClient {
     private let defaultServer = "https://ai-generator-for-video-git-279005246322.europe-west2.run.app"
 
     var baseURL: URL {
-        let saved = UserDefaults.standard.string(forKey: "serverURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effective: String
-        if saved == nil || saved?.isEmpty == true || saved == "http://localhost:8000" || saved == "http://10.0.2.2:8000" {
-            effective = defaultServer
-        } else {
-            effective = saved!
-        }
-        return URL(string: effective.trimmingCharacters(in: CharacterSet(charactersIn: "/")))!
+        let saved = UserDefaults.standard.string(forKey: "serverURL")
+        let effective = normalizedServer(saved)
+        if saved != effective { UserDefaults.standard.set(effective, forKey: "serverURL") }
+        return URL(string: effective)!
     }
 
     private let decoder = JSONDecoder()
@@ -49,26 +45,63 @@ actor APIClient {
     func job(_ id: String) async throws -> Job { try await get("/api/jobs/\(id)", as: Job.self) }
     func absolute(_ path: String) -> URL { path.hasPrefix("http") ? URL(string: path)! : baseURL.appending(path: path) }
 
+    private func normalizedServer(_ value: String?) -> String {
+        let saved = value?.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        let lower = saved.lowercased()
+        if saved.isEmpty ||
+            lower.hasPrefix("http://localhost") || lower.hasPrefix("https://localhost") ||
+            lower.hasPrefix("http://127.0.0.1") || lower.hasPrefix("https://127.0.0.1") ||
+            lower.hasPrefix("http://10.0.2.2") || lower.hasPrefix("https://10.0.2.2") {
+            return defaultServer
+        }
+        return saved
+    }
+
     private func get<T: Decodable>(_ path: String, as: T.Type) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(from: absolute(path)); try validate(response, data); return try decoder.decode(T.self, from: data)
+        let (data, response) = try await URLSession.shared.data(from: absolute(path))
+        try validate(response, data)
+        return try decoder.decode(T.self, from: data)
     }
 
     private func json<T: Decodable>(path: String, method: String, body: [String: String], as: T.Type) async throws -> T {
-        var request = URLRequest(url: absolute(path)); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request); try validate(response, data); return try decoder.decode(T.self, from: data)
+        var request = URLRequest(url: absolute(path))
+        request.httpMethod = method
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data)
+        return try decoder.decode(T.self, from: data)
     }
 
     private func jsonEncodable<B: Encodable, T: Decodable>(path: String, method: String, body: B, as: T.Type) async throws -> T {
-        var request = URLRequest(url: absolute(path)); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = try encoder.encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request); try validate(response, data); return try decoder.decode(T.self, from: data)
+        var request = URLRequest(url: absolute(path))
+        request.httpMethod = method
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data)
+        return try decoder.decode(T.self, from: data)
     }
 
     private func multipart(path: String, data: Data, filename: String, mime: String, fields: [String: String]) async throws -> Data {
-        let boundary = "Boundary-\(UUID().uuidString)"; var body = Data()
-        for (key, value) in fields { body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(key)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!) }
-        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: \(mime)\r\n\r\n".data(using: .utf8)!); body.append(data); body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        var request = URLRequest(url: absolute(path)); request.httpMethod = "POST"; request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"); request.httpBody = body
-        let (result, response) = try await URLSession.shared.data(for: request); try validate(response, result); return result
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var body = Data()
+        for (key, value) in fields {
+            body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(key)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!)
+        }
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        var request = URLRequest(url: absolute(path))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 180
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        let (result, response) = try await URLSession.shared.data(for: request)
+        try validate(response, result)
+        return result
     }
 
     private func validate(_ response: URLResponse, _ data: Data) throws {
@@ -80,5 +113,7 @@ actor APIClient {
 }
 
 private extension URL {
-    func appending(path: String) -> URL { URL(string: path.hasPrefix("/") ? String(absoluteString.dropLast(absoluteString.hasSuffix("/") ? 1 : 0)) + path : absoluteString + "/" + path)! }
+    func appending(path: String) -> URL {
+        URL(string: path.hasPrefix("/") ? String(absoluteString.dropLast(absoluteString.hasSuffix("/") ? 1 : 0)) + path : absoluteString + "/" + path)!
+    }
 }
