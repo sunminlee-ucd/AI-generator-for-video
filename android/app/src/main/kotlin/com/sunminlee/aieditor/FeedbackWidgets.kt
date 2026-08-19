@@ -5,7 +5,7 @@ import android.graphics.Color
 import android.graphics.drawable.Animatable
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
-import android.view.animation.OvershootInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.ProgressBar
 import java.lang.ref.WeakReference
 
@@ -28,7 +28,7 @@ private object UiBusyState {
     fun current(): String? = currentLabel
 }
 
-/** Adds unmistakable press feedback and a shared loading state to editor buttons. */
+/** Crisp editor-style press feedback: visible depression + haptic, without a playful bounce. */
 class Button(context: Context) : android.widget.Button(context) {
     private var baseLabel = ""
     private var changingInternally = false
@@ -48,11 +48,11 @@ class Button(context: Context) : android.widget.Button(context) {
                     animate().cancel()
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     animate()
-                        .scaleX(0.92f)
-                        .scaleY(0.92f)
-                        .translationY(dp(3).toFloat())
-                        .alpha(0.68f)
-                        .setDuration(45)
+                        .scaleX(0.965f)
+                        .scaleY(0.965f)
+                        .translationY(dp(2).toFloat())
+                        .alpha(0.84f)
+                        .setDuration(55)
                         .setInterpolator(null)
                         .start()
                 }
@@ -63,8 +63,8 @@ class Button(context: Context) : android.widget.Button(context) {
                         .scaleY(1f)
                         .translationY(0f)
                         .alpha(1f)
-                        .setDuration(150)
-                        .setInterpolator(OvershootInterpolator(1.7f))
+                        .setDuration(105)
+                        .setInterpolator(DecelerateInterpolator())
                         .start()
                 }
             }
@@ -97,16 +97,16 @@ class Button(context: Context) : android.widget.Button(context) {
             translationY = 0f
             if (loadingText != null) {
                 val primary = isPrimaryAction(baseLabel)
-                spinner.setTint(if (primary) Color.WHITE else Color.rgb(25, 79, 42))
+                spinner.setTint(if (primary) Color.rgb(13, 24, 16) else Color.WHITE)
                 setCompoundDrawables(spinner, null, null, null)
                 compoundDrawablePadding = dp(9)
                 (spinner as? Animatable)?.start()
                 super.setText(loadingText)
-                alpha = 0.92f
+                alpha = 0.9f
             } else {
                 setCompoundDrawables(null, null, null, null)
                 super.setText(baseLabel)
-                alpha = 0.52f
+                alpha = 0.46f
             }
         }
         changingInternally = false
