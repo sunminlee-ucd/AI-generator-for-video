@@ -24,9 +24,12 @@ import java.util.Locale
 import java.util.WeakHashMap
 
 /**
- * A restrained, editor-first visual system inspired by familiar mobile video-editing layouts:
- * dark canvas, media-first preview, real scrub timeline, compact workspaces and limited accents.
- * It intentionally keeps the existing editing logic intact and only changes presentation/chrome.
+ * Editor-first visual system inspired by familiar mobile video-editing conventions:
+ * a dark work canvas, media-dominant preview, scrub timeline, compact workspaces,
+ * restrained green/gold accents and consistent pressed states.
+ *
+ * This class intentionally leaves the existing editing logic untouched and only
+ * changes presentation/chrome so feature behaviour remains stable.
  */
 object ProfessionalEditorSkin {
     private val styled = WeakHashMap<View, Boolean>()
@@ -34,13 +37,11 @@ object ProfessionalEditorSkin {
     private val canvas = Color.rgb(14, 16, 20)
     private val surface = Color.rgb(24, 27, 33)
     private val surfaceRaised = Color.rgb(31, 35, 42)
-    private val surfaceSoft = Color.rgb(39, 44, 52)
     private val divider = Color.rgb(55, 61, 70)
     private val text = Color.rgb(245, 247, 245)
     private val muted = Color.rgb(158, 166, 161)
     private val green = Color.rgb(137, 207, 92)
     private val greenDeep = Color.rgb(34, 66, 39)
-    private val gold = Color.rgb(240, 197, 72)
     private val danger = Color.rgb(229, 100, 100)
 
     private val primaryLabels = setOf(
@@ -80,13 +81,13 @@ object ProfessionalEditorSkin {
             is EditText -> {
                 view.setTextColor(text)
                 view.setHintTextColor(muted)
-                view.background = rounded(surfaceRaised, 13f, divider)
+                view.background = rounded(view.context, surfaceRaised, 13f, divider)
                 view.backgroundTintList = null
                 view.elevation = 0f
             }
             is Spinner -> {
                 view.backgroundTintList = ColorStateList.valueOf(divider)
-                view.setPopupBackgroundDrawable(rounded(surfaceRaised, 12f, divider))
+                view.setPopupBackgroundDrawable(rounded(view.context, surfaceRaised, 12f, divider))
             }
             is SeekBar -> {
                 view.progressTintList = ColorStateList.valueOf(green)
@@ -95,18 +96,20 @@ object ProfessionalEditorSkin {
             }
             is FrameLayout -> {
                 if (containsMedia(view)) {
-                    view.background = rounded(Color.BLACK, 16f, divider)
+                    view.background = rounded(view.context, Color.BLACK, 16f, divider)
                     view.elevation = dp(view.context, 2f)
                     view.outlineProvider = ViewOutlineProvider.BACKGROUND
                     view.clipToOutline = true
                 } else if (view.background is GradientDrawable) {
-                    view.background = rounded(surface, 15f, divider)
+                    view.background = rounded(view.context, surface, 15f, divider)
                     view.elevation = 0f
                 }
             }
             is LinearLayout -> {
                 if (view.background is GradientDrawable) {
-                    val isHero = descendants(view).filterIsInstance<TextView>().any { it.text?.toString() == "AI Media Editor" }
+                    val isHero = descendants(view).filterIsInstance<TextView>().any {
+                        it.text?.toString() == "AI Media Editor"
+                    }
                     view.background = if (isHero) {
                         GradientDrawable(
                             GradientDrawable.Orientation.TL_BR,
@@ -116,7 +119,7 @@ object ProfessionalEditorSkin {
                             setStroke(dpInt(view.context, 1f), divider)
                         }
                     } else {
-                        rounded(surface, 15f, divider)
+                        rounded(view.context, surface, 15f, divider)
                     }
                     view.elevation = dp(view.context, if (isHero) 2f else 0f)
                     view.outlineProvider = ViewOutlineProvider.BACKGROUND
@@ -135,11 +138,20 @@ object ProfessionalEditorSkin {
         when {
             value == "Failed" -> {
                 view.setTextColor(danger)
-                if (view.background != null) view.background = rounded(Color.rgb(47, 28, 30), 12f, Color.rgb(96, 47, 50))
+                if (view.background != null) {
+                    view.background = rounded(view.context, Color.rgb(47, 28, 30), 12f, Color.rgb(96, 47, 50))
+                }
             }
             status -> {
                 view.setTextColor(if (value == "Ready") green else text)
-                if (view.background != null) view.background = rounded(surfaceRaised, 12f, if (value == "Ready") greenDeep else divider)
+                if (view.background != null) {
+                    view.background = rounded(
+                        view.context,
+                        surfaceRaised,
+                        12f,
+                        if (value == "Ready") greenDeep else divider,
+                    )
+                }
                 view.gravity = Gravity.CENTER_VERTICAL
             }
             view.textSize >= 18f -> view.setTextColor(text)
@@ -147,7 +159,7 @@ object ProfessionalEditorSkin {
         }
 
         if (view.background is GradientDrawable && !status) {
-            view.background = rounded(surfaceRaised, 12f, divider)
+            view.background = rounded(view.context, surfaceRaised, 12f, divider)
         }
     }
 
@@ -156,38 +168,43 @@ object ProfessionalEditorSkin {
         button.elevation = 0f
         button.translationZ = 0f
         button.includeFontPadding = false
-        button.setPadding(dpInt(button.context, 10f), dpInt(button.context, 7f), dpInt(button.context, 10f), dpInt(button.context, 7f))
+        button.setPadding(
+            dpInt(button.context, 10f),
+            dpInt(button.context, 7f),
+            dpInt(button.context, 10f),
+            dpInt(button.context, 7f),
+        )
 
         val workspace = workspaceSelection(button)
         when {
             workspace == true -> {
                 button.setTextColor(text)
-                button.background = rounded(Color.rgb(34, 53, 38), 13f, green, 2)
+                button.background = rounded(button.context, Color.rgb(34, 53, 38), 13f, green, 2)
             }
             workspace == false -> {
                 button.setTextColor(muted)
-                button.background = rounded(surface, 13f, divider)
+                button.background = rounded(button.context, surface, 13f, divider)
             }
             label in primaryLabels -> {
                 button.setTextColor(Color.rgb(13, 24, 16))
-                button.background = rounded(green, 13f, Color.rgb(164, 226, 123))
+                button.background = rounded(button.context, green, 13f, Color.rgb(164, 226, 123))
             }
             label == "Remove" -> {
                 button.setTextColor(Color.rgb(255, 205, 205))
-                button.background = rounded(Color.rgb(52, 30, 33), 13f, Color.rgb(100, 51, 56))
+                button.background = rounded(button.context, Color.rgb(52, 30, 33), 13f, Color.rgb(100, 51, 56))
             }
             label.contains("3D Turn", ignoreCase = true) || label.startsWith("Style") -> {
                 button.setTextColor(text)
-                button.background = rounded(Color.rgb(45, 40, 24), 13f, Color.rgb(111, 93, 42))
+                button.background = rounded(button.context, Color.rgb(45, 40, 24), 13f, Color.rgb(111, 93, 42))
             }
             label.contains('\n') -> {
                 button.gravity = Gravity.CENTER_VERTICAL or Gravity.START
                 button.setTextColor(text)
-                button.background = rounded(surfaceRaised, 13f, divider)
+                button.background = rounded(button.context, surfaceRaised, 13f, divider)
             }
             else -> {
                 button.setTextColor(text)
-                button.background = rounded(surfaceRaised, 13f, divider)
+                button.background = rounded(button.context, surfaceRaised, 13f, divider)
             }
         }
     }
@@ -213,16 +230,20 @@ object ProfessionalEditorSkin {
                 params.height = dpInt(activity, 248f)
                 preview.layoutParams = params
             }
-            preview.background = rounded(Color.BLACK, 16f, Color.rgb(67, 73, 83))
+            preview.background = rounded(activity, Color.BLACK, 16f, Color.rgb(67, 73, 83))
         }
 
         if (preview != null && video != null && content.findViewWithTag<View>("editor-timeline") == null) {
             val index = content.indexOfChild(preview)
             val timeline = EditorTimelineBar(activity, video).apply { tag = "editor-timeline" }
-            content.addView(timeline, (index + 1).coerceAtMost(content.childCount), LinearLayout.LayoutParams(-1, dpInt(activity, 48f)).apply {
-                topMargin = dpInt(activity, 7f)
-                bottomMargin = dpInt(activity, 3f)
-            })
+            content.addView(
+                timeline,
+                (index + 1).coerceAtMost(content.childCount),
+                LinearLayout.LayoutParams(-1, dpInt(activity, 48f)).apply {
+                    topMargin = dpInt(activity, 7f)
+                    bottomMargin = dpInt(activity, 3f)
+                },
+            )
         }
 
         descendants(content).filterIsInstance<ScrollView>().forEach {
@@ -243,7 +264,7 @@ object ProfessionalEditorSkin {
                 params.height = dpInt(activity, 248f)
                 preview.layoutParams = params
             }
-            preview.background = rounded(Color.BLACK, 16f, divider)
+            preview.background = rounded(activity, Color.BLACK, 16f, divider)
         }
     }
 
@@ -254,9 +275,12 @@ object ProfessionalEditorSkin {
                 descendants(layout).filterIsInstance<ScrollView>().isNotEmpty()
         }
 
-    private fun containsMedia(group: ViewGroup): Boolean = descendants(group).any { it is VideoView || it is ImageView }
+    private fun containsMedia(group: ViewGroup): Boolean = descendants(group).any {
+        it is VideoView || it is ImageView
+    }
 
-    private fun directChildren(group: ViewGroup): List<View> = (0 until group.childCount).map { group.getChildAt(it) }
+    private fun directChildren(group: ViewGroup): List<View> =
+        (0 until group.childCount).map { group.getChildAt(it) }
 
     private fun descendants(root: View): Sequence<View> = sequence {
         yield(root)
@@ -265,31 +289,24 @@ object ProfessionalEditorSkin {
         }
     }
 
-    internal fun rounded(fill: Int, radius: Float, stroke: Int? = null, strokeWidth: Int = 1): GradientDrawable =
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = radius * resourcesDensity
-            setColor(fill)
-            if (stroke != null) setStroke((strokeWidth * resourcesDensity).toInt().coerceAtLeast(1), stroke)
-        }
-
-    // Updated by every apply() call before drawable creation through dp(context, ...).
-    private var resourcesDensity: Float = 1f
-
-    private fun rounded(fill: Int, radius: Float, stroke: Int? = null, strokeWidth: Int = 1, context: Context? = null): GradientDrawable {
-        if (context != null) resourcesDensity = context.resources.displayMetrics.density
-        return rounded(fill, radius, stroke, strokeWidth)
+    private fun rounded(
+        context: Context,
+        fill: Int,
+        radius: Float,
+        stroke: Int? = null,
+        strokeWidth: Int = 1,
+    ): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(context, radius)
+        setColor(fill)
+        if (stroke != null) setStroke(dpInt(context, strokeWidth.toFloat()).coerceAtLeast(1), stroke)
     }
 
-    private fun dp(context: Context, value: Float): Float {
-        resourcesDensity = context.resources.displayMetrics.density
-        return value * resourcesDensity
-    }
-
+    private fun dp(context: Context, value: Float): Float = value * context.resources.displayMetrics.density
     private fun dpInt(context: Context, value: Float): Int = dp(context, value).toInt()
 }
 
-/** A functional, lightweight scrub strip so the editor reads like an editor, not a settings form. */
+/** Functional scrub strip so the main workspace immediately reads as a video editor. */
 private class EditorTimelineBar(context: Context, private val video: VideoView) : LinearLayout(context) {
     private val handler = Handler(Looper.getMainLooper())
     private val play = com.sunminlee.aieditor.Button(context)
@@ -349,7 +366,11 @@ private class EditorTimelineBar(context: Context, private val video: VideoView) 
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser) current.text = formatTime(progress)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) { userSeeking = true }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {
+                    userSeeking = true
+                }
+
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
                     val value = seekBar?.progress ?: 0
                     runCatching { video.seekTo(value) }
